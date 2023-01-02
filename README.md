@@ -1,5 +1,7 @@
 # fast_gpt2
 
+#THIS IS NOT PRODUCTION READY NOR EVEN CORRECT (right now)
+
 ## Use
 ```
 cargo run --release # you may need to add --features cblas for better performance
