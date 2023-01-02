@@ -111,7 +111,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     for i in 0..20 {
         let start = std::time::Instant::now();
         let logits = gpt2.forward(encoded.get_ids());
-        println!("Inference {:?}", start.elapsed());
+        // println!("Inference {:?}", start.elapsed());
     }
     println!("Total Inference {:?}", start.elapsed());
     Ok(())
