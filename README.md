@@ -18,3 +18,19 @@ Total Inference 103.579065ms - [2, 768]
 
 This basically loads the model instantly and runs the first forward pass at 56ms instead of ~30ms for the subsequent passes.
 
+
+## Comparison
+
+Here is a reference with the same code in Python (ofc python is much more feature complete, so I included just the import times for reference)
+
+```
+python test.py (use TRANSFORMERS_OFFLINE=1 to remove potential network slowdown)
+```
+
+```
+torch imported in 0:00:00.756219
+transformers imported in 0:00:00.966711
+Loaded in 0:00:02.615420
+Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+Ran in 0:00:02.663160
+```
