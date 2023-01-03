@@ -1,7 +1,9 @@
 mod model;
 mod ops;
 mod tensor;
+mod tokenizer;
 use crate::model::Gpt2;
+use crate::tokenizer::get_tokenizer;
 use futures_util::StreamExt;
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
@@ -42,6 +44,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let filename = "/tmp/model.safetensors";
     if !std::path::Path::new(filename).exists() {
         let url = "https://huggingface.co/gpt2/resolve/main/model.safetensors";
+        println!("Downloading {url:?}");
         download(url, filename).await?;
     }
 
@@ -51,13 +54,18 @@ pub async fn run() -> Result<(), Gpt2Error> {
 
     println!("Safetensors {:?}", start.elapsed());
 
-    let tokenizer_filename = "/tmp/tokenizer.json";
-    if !std::path::Path::new(tokenizer_filename).exists() {
-        let url = "https://huggingface.co/gpt2/resolve/main/tokenizer.json";
-        download(url, tokenizer_filename).await?;
-    }
-    let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
-    println!("Tokenizer {:?}", start.elapsed());
+    let tokenizer = get_tokenizer();
+    // let tokenizer_filename = "/tmp/tokenizer.json";
+    // if !std::path::Path::new(tokenizer_filename).exists() {
+    //     let url = "https://huggingface.co/gpt2/resolve/main/tokenizer.json";
+    //     println!("Downloading {url:?}");
+    //     download(url, tokenizer_filename).await?;
+    // }
+    // let file = std::fs::File::open(&tokenizer_filename).unwrap();
+    // let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
+    // println!("Read it in {:?}", start.elapsed());
+    // let tokenizer: Tokenizer = serde_json::from_slice(&buffer).unwrap();
+    // println!("Tokenizer {:?}", start.elapsed());
 
     // let dev: Cpu = Default::default();
     // let mut gpt2: TransformerDecoder<768, 12, 1024, 12, Cpu> = dev.build_module();
