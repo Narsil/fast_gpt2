@@ -6,12 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+futures = "0.3.25"
 futures-util = "0.3.25"
 matrixmultiply = {version = "0.3.2", features= ["threading"]}
 memmap2 = "0.5"
-openssl = { version = "0.10.45", features = ["vendored"] }
 reqwest = { version = "0.11", features = ["stream"] }
-safetensors = {path = "../safetensors/safetensors/" }
+safetensors = { git = "https://github.com/huggingface/safetensors", branch="forcing_alignment" }
 thiserror = "1.0"
 tokenizers = {version = "0.13.2", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
+cblas-sys = { version = "0.1.4", default-features = false, optional = true }
+libc = { version = "0.2", default-features = false, optional = true }
+
+[features]
+cblas = ["dep:cblas-sys", "dep:libc"]

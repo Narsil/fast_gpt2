@@ -193,7 +193,7 @@ impl<'a> Gpt2<'a> {
 }
 
 impl<'a> Gpt2<'a> {
-    pub fn forward(&self, ids: &[u32]) -> OwnedTensor {
+    pub fn forward(&self, _ids: &[u32]) -> OwnedTensor {
         let mut tensor = OwnedTensor::new(vec![0.0; 768 * 2], vec![2, 768]);
         self.h.forward(&mut tensor);
         self.ln_f.forward(&mut tensor);

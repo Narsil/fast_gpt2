@@ -1,11 +1,11 @@
 use crate::tensor::{OwnedTensor, Tensor};
 
-// #[cfg(feature = "cblas")]
-// use cblas_sys::{
-//     cblas_sgemm as sgemm, CblasColMajor as ColMajor, CblasNoTrans as NoTr,
-//     CblasRowMajor as RowMajor, CblasTrans as Tr,
-// };
-//
+#[cfg(feature = "cblas")]
+use cblas_sys::{
+    cblas_sgemm as sgemm, CblasColMajor as ColMajor, CblasNoTrans as NoTr,
+    CblasRowMajor as RowMajor, CblasTrans as Tr,
+};
+
 #[inline]
 pub(crate) fn matmul(a: &OwnedTensor, b: &Tensor, c: &mut OwnedTensor) {
     let ap = a.as_ptr();
@@ -16,9 +16,6 @@ pub(crate) fn matmul(a: &OwnedTensor, b: &Tensor, c: &mut OwnedTensor) {
     let k = a.shape()[1];
     let n = b.shape()[1];
 
-    // println!("A {:?}", a.shape());
-    // println!("b {:?}", b.shape());
-    // println!("c {:?}", c.shape());
     assert_eq!(k, b.shape()[0]);
 
     let ar = k as isize;
@@ -27,30 +24,27 @@ pub(crate) fn matmul(a: &OwnedTensor, b: &Tensor, c: &mut OwnedTensor) {
     let bc = 1;
     let cr = n as isize;
     let cc = 1;
-    // #[cfg(not(feature = "cblas"))]
+    #[cfg(not(feature = "cblas"))]
     unsafe {
         matrixmultiply::sgemm(m, k, n, 1.0, ap, ar, ac, bp, br, bc, 1.0, cp, cr, cc);
     }
 
-    // #[cfg(feature = "cblas")]
-    // unsafe {
-    //     let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
-    //     let [ar, ac] = a.strides.map(|x| x as libc::c_int);
-    //     let [br, bc] = b.strides.map(|x| x as libc::c_int);
-    //     let [cr, cc] = c.strides.map(|x| x as libc::c_int);
-    //     let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
-    //         let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
-    //         let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
-    //         (ColMajor, a_tr, b_tr, lda, ldb, m)
-    //     } else {
-    //         let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
-    //         let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
-    //         (RowMajor, a_tr, b_tr, lda, ldb, n)
-    //     };
-    //     sgemm(
-    //         layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
-    //     )
-    // }
+    #[cfg(feature = "cblas")]
+    unsafe {
+        let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
+        let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
+            let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
+            let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
+            (ColMajor, a_tr, b_tr, lda, ldb, m)
+        } else {
+            let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
+            let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
+            (RowMajor, a_tr, b_tr, lda, ldb, n)
+        };
+        sgemm(
+            layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
+        )
+    }
 }
 
 pub fn add(a: &Tensor, b: &mut OwnedTensor) {
@@ -59,19 +53,17 @@ pub fn add(a: &Tensor, b: &mut OwnedTensor) {
             .iter()
             .zip(b.data.iter_mut())
             .for_each(|(left, right)| *right += left);
+    } else if b.shape()[0] == 2 && &b.shape()[1..] == a.shape() {
+        a.data
+            .iter()
+            .zip(b.data.iter_mut())
+            .for_each(|(left, right)| *right *= left);
+        a.data
+            .iter()
+            .zip(b.data.iter_mut().skip(a.shape()[0]))
+            .for_each(|(left, right)| *right *= left);
     } else {
-        if b.shape()[0] == 2 && &b.shape()[1..] == a.shape() {
-            a.data
-                .iter()
-                .zip(b.data.iter_mut())
-                .for_each(|(left, right)| *right *= left);
-            a.data
-                .iter()
-                .zip(b.data.iter_mut().skip(a.shape()[0]))
-                .for_each(|(left, right)| *right *= left);
-        } else {
-            todo!("Add broadcast")
-        }
+        todo!("Add broadcast")
     }
 }
 
@@ -81,19 +73,17 @@ pub fn mul(a: &Tensor, b: &mut OwnedTensor) {
             .iter()
             .zip(b.data.iter_mut())
             .for_each(|(left, right)| *right *= left);
+    } else if b.shape()[0] == 2 && &b.shape()[1..] == a.shape() {
+        a.data
+            .iter()
+            .zip(b.data.iter_mut())
+            .for_each(|(left, right)| *right *= left);
+        a.data
+            .iter()
+            .zip(b.data.iter_mut().skip(a.shape()[0]))
+            .for_each(|(left, right)| *right *= left);
     } else {
-        if b.shape()[0] == 2 && &b.shape()[1..] == a.shape() {
-            a.data
-                .iter()
-                .zip(b.data.iter_mut())
-                .for_each(|(left, right)| *right *= left);
-            a.data
-                .iter()
-                .zip(b.data.iter_mut().skip(a.shape()[0]))
-                .for_each(|(left, right)| *right *= left);
-        } else {
-            todo!("mul broadcast")
-        }
+        todo!("mul broadcast")
     }
 }
 
