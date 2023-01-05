@@ -20,7 +20,7 @@ impl<'data> Tensor<'data> {
     }
 
     pub fn data(&self) -> &[f32] {
-        &self.data
+        self.data
     }
 }
 
@@ -70,12 +70,9 @@ impl OwnedTensor {
         &self.shape
     }
 
+    #[cfg(test)]
     pub fn data(&self) -> &[f32] {
         &self.data
-    }
-
-    pub fn add(&mut self, value: f32) {
-        self.data.iter_mut().for_each(|i| *i += value);
     }
 
     pub fn add_tensor(&mut self, other: &OwnedTensor) {
@@ -94,19 +91,6 @@ impl OwnedTensor {
         let mut c = OwnedTensor::new(vec![0.0; len], shape);
         matmul(self, a, &mut c);
         add(b, &mut c);
-        c
-    }
-
-    pub fn matmul(&self, a: &Tensor) -> OwnedTensor {
-        let m = self.shape()[0];
-        let k = self.shape()[1];
-        let n = a.shape()[1];
-        assert_eq!(k, a.shape()[0], "A {:?} B {:?}", self.shape(), a.shape());
-
-        let shape = vec![m, n];
-        let len = m * n;
-        let mut c = OwnedTensor::new(vec![0.0; len], shape);
-        matmul(self, a, &mut c);
         c
     }
 
@@ -130,7 +114,7 @@ impl OwnedTensor {
     }
 
     pub fn select(mut self, ids: &[u32], weights: &Tensor) -> OwnedTensor {
-        let vocab_size = weights.shape()[0];
+        let _vocab_size = weights.shape()[0];
         let hidden_dim = weights.shape()[1];
         let sequence_length = ids.len();
         assert_eq!(self.shape(), [sequence_length, hidden_dim]);

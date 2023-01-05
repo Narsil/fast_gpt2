@@ -184,41 +184,41 @@ mod tests {
     #[test]
     fn simple_matmul() {
         let data = vec![1.0, 2.0, 3.0, 4.0];
-        let A = OwnedTensor::new(data, vec![2, 2]);
+        let a = OwnedTensor::new(data, vec![2, 2]);
         let data = [1.0, 2.0, 3.0, 4.0];
         let b = Tensor::new(&data, vec![2, 2]);
         let data = vec![0.0; 4];
         let mut c = OwnedTensor::new(data, vec![2, 2]);
 
-        matmul(&A, &b, &mut c);
+        matmul(&a, &b, &mut c);
         assert_eq!(c.data, &[7.0, 10.0, 15.0, 22.0]);
 
         let data = vec![1.0, 2.0];
-        let A = OwnedTensor::new(data, vec![2, 1]);
+        let a = OwnedTensor::new(data, vec![2, 1]);
         let data = [3.0, 4.0];
         let b = Tensor::new(&data, vec![1, 2]);
         let data = vec![0.0; 4];
         let mut c = OwnedTensor::new(data, vec![2, 2]);
-        matmul(&A, &b, &mut c);
+        matmul(&a, &b, &mut c);
         assert_eq!(c.data, &[3.0, 4.0, 6.0, 8.0])
     }
 
     #[test]
     fn simple_matmul_t() {
-        let A = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let a = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         // A.T
         let b = Tensor::new(&[1.0, 3.0, 2.0, 4.0], vec![2, 2]);
         let data = vec![0.0; 4];
         let mut c = OwnedTensor::new(data, vec![2, 2]);
 
-        matmul_t(&A, &b, &mut c);
+        matmul_t(&a, &b, &mut c);
         assert_eq!(c.data, &[7.0, 10.0, 15.0, 22.0]);
 
-        let A = OwnedTensor::new(vec![1.0, 2.0], vec![2, 1]);
+        let a = OwnedTensor::new(vec![1.0, 2.0], vec![2, 1]);
         let b = Tensor::new(&[3.0, 4.0], vec![2, 1]);
         let data = vec![0.0; 4];
         let mut c = OwnedTensor::new(data, vec![2, 2]);
-        matmul_t(&A, &b, &mut c);
+        matmul_t(&a, &b, &mut c);
         assert_eq!(c.data, &[3.0, 4.0, 6.0, 8.0])
     }
 }

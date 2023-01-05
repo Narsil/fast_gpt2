@@ -33,7 +33,7 @@ impl<'a> Mlp<'a> {
 }
 
 pub struct Attention<'a> {
-    bias: Tensor<'a>,
+    _bias: Tensor<'a>,
     c_attn: Linear<'a>,
     c_proj: Linear<'a>,
 }
@@ -64,7 +64,7 @@ impl<'a> Attention<'a> {
         Self {
             c_attn,
             c_proj,
-            bias,
+            _bias: bias,
         }
     }
 
@@ -189,7 +189,7 @@ impl<'a> Embedding<'a> {
     }
 
     fn forward(&self, ids: &[u32]) -> OwnedTensor {
-        let vocab_size = self.weight.shape()[0];
+        let _vocab_size = self.weight.shape()[0];
         let hidden_dim = self.weight.shape()[1];
         let shape = vec![ids.len(), hidden_dim];
         let data = vec![0.0; ids.len() * hidden_dim];
@@ -262,11 +262,6 @@ impl<'a> Gpt2<'a> {
         self.lm_head.forward(&mut tensor);
         tensor
     }
-}
-
-pub struct Gpt2ForCausalLM<'a> {
-    transformer: Gpt2<'a>,
-    ln_f: LayerNorm<'a>,
 }
 
 #[cfg(test)]
@@ -365,7 +360,7 @@ mod tests {
         let mut input = OwnedTensor::new(vec![10.0, 1.0, 1.0, 1.0], vec![2, 2]);
         layer_norm.forward(&mut input);
         assert_eq!(
-            simplify(&input.data()[..]),
+            simplify(input.data()),
             // Values obtained through python
             [0.0, -2.0, 1.0, 2.0]
         );
