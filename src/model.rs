@@ -1,4 +1,4 @@
-use crate::ops::{add, mul};
+use crate::ops::{add, mul, normalize};
 use crate::tensor::{OwnedTensor, Tensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
@@ -69,11 +69,7 @@ impl<'a> Attention<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
-        // println!("Bias {:?}", self.bias.shape());
-        tensor.add(self.bias._item());
-        // println!("c_attn {:?}", self.c_attn);
         self.c_attn.forward(tensor);
-        // println!("c_proj {:?}", self.c_attn);
         self.c_proj.forward(tensor);
     }
 }
@@ -158,45 +154,220 @@ impl<'a> Linear<'a> {
     }
 }
 
+pub struct UnbiasedLinear<'a> {
+    weight: Tensor<'a>,
+}
+
+impl<'a> std::fmt::Debug for UnbiasedLinear<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnbiasedLinear")
+            .field("shape", &self.weight.shape())
+            .finish()
+    }
+}
+
+impl<'a> UnbiasedLinear<'a> {
+    fn from(weight: TensorView<'a>) -> Self {
+        let weight: Tensor = weight.into();
+        Self { weight }
+    }
+
+    fn forward(&self, tensor: &mut OwnedTensor) {
+        let c = tensor.matmul_t(&self.weight);
+        *tensor = c;
+    }
+}
+
+pub struct Embedding<'a> {
+    weight: Tensor<'a>,
+}
+
+impl<'a> Embedding<'a> {
+    fn from(weight: TensorView<'a>) -> Self {
+        let weight: Tensor = weight.into();
+        Self { weight }
+    }
+
+    fn forward(&self, ids: &[u32]) -> OwnedTensor {
+        let vocab_size = self.weight.shape()[0];
+        let hidden_dim = self.weight.shape()[1];
+        let shape = vec![ids.len(), hidden_dim];
+        let data = vec![0.0; ids.len() * hidden_dim];
+        let tensor = OwnedTensor::new(data, shape);
+        tensor.select(ids, &self.weight)
+    }
+}
+
 pub struct LayerNorm<'a> {
     weight: Tensor<'a>,
     bias: Tensor<'a>,
+    epsilon: f32,
 }
 
 impl<'a> LayerNorm<'a> {
     fn from(weight: TensorView<'a>, bias: TensorView<'a>) -> Self {
         let weight: Tensor = weight.into();
         let bias: Tensor = bias.into();
-        Self { weight, bias }
+        let epsilon = 1e-5;
+        Self {
+            weight,
+            bias,
+            epsilon,
+        }
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
+        normalize(tensor, self.epsilon);
         mul(&self.weight, tensor);
         add(&self.bias, tensor);
     }
 }
 
 pub struct Gpt2<'a> {
+    wte: Embedding<'a>,
+    wpe: Embedding<'a>,
     h: Gpt2Model<'a>,
     ln_f: LayerNorm<'a>,
+    lm_head: UnbiasedLinear<'a>,
 }
 
 impl<'a> Gpt2<'a> {
     pub fn from_tensors(tensors: &'a SafeTensors<'a>) -> Self {
+        let wte = Embedding::from(tensors.tensor("wte.weight").unwrap());
+        let wpe = Embedding::from(tensors.tensor("wpe.weight").unwrap());
         let h = Gpt2Model::from_tensors(tensors);
         let ln_f = LayerNorm::from(
             tensors.tensor("ln_f.weight").unwrap(),
             tensors.tensor("ln_f.bias").unwrap(),
         );
-        Self { h, ln_f }
+        let lm_head = UnbiasedLinear::from(tensors.tensor("wte.weight").unwrap());
+        Self {
+            h,
+            ln_f,
+            wte,
+            wpe,
+            lm_head,
+        }
     }
 }
 
 impl<'a> Gpt2<'a> {
-    pub fn forward(&self, _ids: &[u32]) -> OwnedTensor {
-        let mut tensor = OwnedTensor::new(vec![0.0; 768 * 2], vec![2, 768]);
+    pub fn forward(&self, ids: &[u32]) -> OwnedTensor {
+        let mut tensor = self.wte.forward(ids);
+        let positions: Vec<_> = (0..ids.len() as u32).collect();
+        let position_embeddings = self.wpe.forward(&positions[..]);
+        tensor.add_tensor(&position_embeddings);
         self.h.forward(&mut tensor);
         self.ln_f.forward(&mut tensor);
+        self.lm_head.forward(&mut tensor);
         tensor
+    }
+}
+
+pub struct Gpt2ForCausalLM<'a> {
+    transformer: Gpt2<'a>,
+    ln_f: LayerNorm<'a>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memmap2::MmapOptions;
+
+    fn simplify(data: &[f32]) -> Vec<f32> {
+        let precision = 3;
+        let m = 10.0 * 10.0f32.powf(precision as f32);
+        data.iter().map(|x| (x * m).round() / m).collect()
+    }
+
+    #[test]
+    fn tensor_values() {
+        let filename = "model.safetensors";
+        let file = std::fs::File::open(filename).unwrap();
+        let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let tensors = SafeTensors::deserialize(&buffer).unwrap();
+        let tensor: Tensor = tensors.tensor("ln_f.weight").unwrap().into();
+        let data = tensor.data();
+        assert_eq!(
+            simplify(&data[..10]),
+            // Values obtained through python
+            [1.3971, 1.3750, 1.8870, 1.1688, 1.2724, 1.2508, 9.4198, 1.4371, 1.4527, 1.1856]
+        );
+        assert_eq!(
+            simplify(&data[data.len() - 10..]),
+            // Values obtained through python
+            [1.1758, 1.4514, 1.1525, 1.1731, 4.2194, 1.1660, 1.1625, 1.1034, 1.0980, 1.2070]
+        );
+    }
+
+    #[test]
+    fn embedding() {
+        let filename = "model.safetensors";
+        let file = std::fs::File::open(filename).unwrap();
+        let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let tensors = SafeTensors::deserialize(&buffer).unwrap();
+        let tensor = tensors.tensor("wte.weight").unwrap();
+        let embedding = Embedding::from(tensor);
+        assert_eq!(
+            simplify(&embedding.weight.data()[..10]),
+            // Values obtained through python
+            [
+                -0.1101, -0.0393, 0.0331, 0.1338, -0.0485, -0.0789, -0.2398, -0.0895, 0.0253,
+                -0.1074
+            ]
+        );
+        let out = embedding.forward(&[1, 256, 50256]);
+        let data = out.data();
+        assert_eq!(out.shape(), [3, 768]);
+        assert_eq!(
+            simplify(&data[..10]),
+            // Values obtained through python
+            [0.0403, -0.0486, 0.0462, -0.0990, 0.0826, 0.0768, -0.2202, -0.0110, 0.0592, 0.0354]
+        );
+        assert_eq!(
+            simplify(&data[data.len() - 10..]),
+            // Values obtained through python
+            [-0.0499, 0.0689, 0.0123, -0.2156, -0.1742, -0.0373, 0.0930, 0.0070, 0.1552, 0.1207]
+        );
+    }
+
+    #[test]
+    fn layer_norm() {
+        let filename = "model.safetensors";
+        let file = std::fs::File::open(filename).unwrap();
+        let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let tensors = SafeTensors::deserialize(&buffer).unwrap();
+        let layer_norm = LayerNorm::from(
+            tensors.tensor("ln_f.weight").unwrap(),
+            tensors.tensor("ln_f.bias").unwrap(),
+        );
+        let data = layer_norm.weight.data();
+        assert_eq!(
+            simplify(&data[..10]),
+            // Values obtained through python
+            [1.3971, 1.3750, 1.8870, 1.1688, 1.2724, 1.2508, 9.4198, 1.4371, 1.4527, 1.1856]
+        );
+        assert_eq!(
+            simplify(&data[data.len() - 10..]),
+            // Values obtained through python
+            [1.1758, 1.4514, 1.1525, 1.1731, 4.2194, 1.1660, 1.1625, 1.1034, 1.0980, 1.2070]
+        );
+
+        let weight = Tensor::new(&[-1.0, 4.0], vec![2]);
+        let bias = Tensor::new(&[1.0, 2.0], vec![2]);
+        let epsilon = 1e-5;
+        let layer_norm = LayerNorm {
+            weight,
+            bias,
+            epsilon,
+        };
+
+        let mut input = OwnedTensor::new(vec![10.0, 1.0, 1.0, 1.0], vec![2, 2]);
+        layer_norm.forward(&mut input);
+        assert_eq!(
+            simplify(&input.data()[..]),
+            // Values obtained through python
+            [0.0, -2.0, 1.0, 2.0]
+        );
     }
 }

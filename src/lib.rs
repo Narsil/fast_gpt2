@@ -33,7 +33,7 @@ pub enum Gpt2Error {
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
     // curl https://huggingface.co/gpt2/resolve/main/model.safetensors
-    let filename = "/tmp/model.safetensors";
+    let filename = "model.safetensors";
     let max_files = 100;
     let chunk_size = 10_000_000;
     if !std::path::Path::new(filename).exists() {
@@ -46,7 +46,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let tensors = SafeTensors::deserialize(&buffer)?;
     println!("Safetensors {:?}", start.elapsed());
 
-    let filename = "/tmp/tokenizer.json";
+    let filename = "tokenizer.json";
     if !std::path::Path::new(filename).exists() {
         let url = "https://huggingface.co/gpt2/resolve/main/tokenizer.json";
         println!("Downloading {url:?} into {filename:?}");
@@ -56,11 +56,11 @@ pub async fn run() -> Result<(), Gpt2Error> {
     println!("Tokenizer {:?}", start.elapsed());
 
     let gpt2 = Gpt2::from_tensors(&tensors);
-    let string = "This is a test";
+    let string = "test";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
-    for _i in 0..5 {
+    for _i in 0..1 {
         let start = std::time::Instant::now();
         let _logits = gpt2.forward(encoded.get_ids());
         println!("Inference {:?}", start.elapsed());
