@@ -20,6 +20,12 @@ pub async fn download(
         .ok_or(Gpt2Error::NoContentLength)?
         .to_str()?;
     let length: usize = length.parse()?;
+    let file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(filename)
+        .await?;
+    file.set_len(length as u64).await?;
 
     let mut handles = vec![];
     let semaphore = Arc::new(Semaphore::new(max_files));

@@ -32,8 +32,10 @@ jobs:
           command: clippy
           args: --all-targets --all-features -- -D warnings
       - name: Download model for tests
-        run:
-          wget https://huggingface.co/Narsil/gpt2/resolve/main/model.safetensors
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: --example download --release
       - name: Run Tests
         uses: actions-rs/cargo@v1
         with:

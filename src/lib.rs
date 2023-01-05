@@ -1,4 +1,4 @@
-mod download;
+pub mod download;
 mod model;
 mod ops;
 mod tensor;
