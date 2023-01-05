@@ -19,6 +19,7 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
           override: true
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build
         uses: actions-rs/cargo@v1
