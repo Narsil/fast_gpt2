@@ -1,0 +1,16 @@
+repos:
+  - repo: https://github.com/Narsil/pre-commit-rust
+    rev: 0c016cee78144d06d906fccc7715d607a946ca5c
+    hooks:
+      - id: fmt
+        name: "Rust (fmt)"
+        args: ["--"]
+      - id: clippy
+        name: "Rust (clippy)"
+        args:
+          [
+            "--all-features",
+            "--all-targets",
+            "--",
+            "-Dwarnings",
+          ]
