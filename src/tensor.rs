@@ -1,4 +1,3 @@
-use crate::ops::{add, add_owned, matmul, matmul_t};
 use safetensors::tensor::{Dtype, TensorView};
 
 pub struct Tensor<'data> {
@@ -73,58 +72,5 @@ impl OwnedTensor {
     #[cfg(test)]
     pub fn data(&self) -> &[f32] {
         &self.data
-    }
-
-    pub fn add_tensor(&mut self, other: &OwnedTensor) {
-        add_owned(other, self)
-    }
-
-    pub fn addmm(&self, a: &Tensor, b: &Tensor) -> OwnedTensor {
-        let m = self.shape()[0];
-        let k = self.shape()[1];
-        let n = a.shape()[1];
-        assert_eq!(k, a.shape()[0]);
-        assert_eq!(n, b.shape()[0]);
-
-        let shape = vec![m, n];
-        let len = m * n;
-        let mut c = OwnedTensor::new(vec![0.0; len], shape);
-        matmul(self, a, &mut c);
-        add(b, &mut c);
-        c
-    }
-
-    pub fn matmul_t(&self, a: &Tensor) -> OwnedTensor {
-        let m = self.shape()[0];
-        let k = self.shape()[1];
-        let n = a.shape()[0];
-        assert_eq!(
-            k,
-            a.shape()[1],
-            "matmul transposed A {:?} B {:?}",
-            self.shape(),
-            a.shape()
-        );
-
-        let shape = vec![m, n];
-        let len = m * n;
-        let mut c = OwnedTensor::new(vec![0.0; len], shape);
-        matmul_t(self, a, &mut c);
-        c
-    }
-
-    pub fn select(mut self, ids: &[u32], weights: &Tensor) -> OwnedTensor {
-        let _vocab_size = weights.shape()[0];
-        let hidden_dim = weights.shape()[1];
-        let sequence_length = ids.len();
-        assert_eq!(self.shape(), [sequence_length, hidden_dim]);
-        for (i, id) in ids.iter().enumerate() {
-            let id = *id as usize;
-            let weight_offset = id * hidden_dim;
-            let data_offset = i * hidden_dim;
-            self.data[data_offset..data_offset + hidden_dim]
-                .copy_from_slice(&weights.data()[weight_offset..weight_offset + hidden_dim]);
-        }
-        self
     }
 }

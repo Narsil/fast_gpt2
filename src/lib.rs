@@ -68,3 +68,12 @@ pub async fn run() -> Result<(), Gpt2Error> {
     println!("Total Inference {:?}", start.elapsed());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    pub(crate) fn simplify(data: &[f32]) -> Vec<f32> {
+        let precision = 3;
+        let m = 10.0 * 10.0f32.powf(precision as f32);
+        data.iter().map(|x| (x * m).round() / m).collect()
+    }
+}

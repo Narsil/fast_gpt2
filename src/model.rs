@@ -1,4 +1,7 @@
-use crate::ops::{add, mul, normalize};
+use crate::ops::{
+    add, add_owned, addmm, causal_softmax, matmul_owned, matmul_t, matmul_t_owned, mul, normalize,
+    select,
+};
 use crate::tensor::{OwnedTensor, Tensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
@@ -33,24 +36,19 @@ impl<'a> Mlp<'a> {
 }
 
 pub struct Attention<'a> {
-    _bias: Tensor<'a>,
     c_attn: Linear<'a>,
     c_proj: Linear<'a>,
+    n_head: usize,
 }
 
 impl<'a> Attention<'a> {
-    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>) -> Self {
-        let bias: Tensor = tensors
-            .tensor(&format!("h.{index}.attn.bias"))
-            .unwrap()
-            .into();
-        // TODO Implement it for real with `c_attn` tensor
+    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>, n_head: usize) -> Self {
         let c_attn = Linear::from(
             tensors
-                .tensor(&format!("h.{index}.attn.c_proj.weight"))
+                .tensor(&format!("h.{index}.attn.c_attn.weight"))
                 .unwrap(),
             tensors
-                .tensor(&format!("h.{index}.attn.c_proj.bias"))
+                .tensor(&format!("h.{index}.attn.c_attn.bias"))
                 .unwrap(),
         );
         let c_proj = Linear::from(
@@ -64,13 +62,40 @@ impl<'a> Attention<'a> {
         Self {
             c_attn,
             c_proj,
-            _bias: bias,
+            n_head,
         }
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
+        let hidden_dim = tensor.shape()[1];
         self.c_attn.forward(tensor);
-        self.c_proj.forward(tensor);
+        let sequence_length = tensor.shape()[0];
+        let mut chunks = tensor.data.chunks(hidden_dim);
+        let shape = vec![1, hidden_dim];
+        let mut q = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
+        let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
+        let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
+        let mut qk = OwnedTensor::new(
+            vec![0.0; sequence_length * sequence_length],
+            vec![sequence_length, sequence_length],
+        );
+
+        // TODO SPLIT
+        let _head_dim = hidden_dim / self.n_head;
+        // split_heads(n_head, &mut q);
+        // q is now NH, S, H
+        // split_heads(n_head, &mut k);
+        // k is now NH, S, H
+        matmul_t_owned(&q, &k, &mut qk);
+        // qk is now NH, S, S
+        causal_softmax(&mut qk);
+        matmul_owned(&qk, &v, &mut q);
+        // q is now NH, S, H
+        // TODO FUSE
+        // fuse_heads(n_head, &mut q);
+        // q is now S, hidden
+        self.c_proj.forward(&mut q);
+        *tensor = q;
     }
 }
 
@@ -92,7 +117,7 @@ impl<'a> Gpt2Layer<'a> {
             tensors.tensor(&format!("h.{index}.ln_2.bias")).unwrap(),
         );
         let mlp = Mlp::from_tensors(index, tensors);
-        let attention = Attention::from_tensors(index, tensors);
+        let attention = Attention::from_tensors(index, tensors, 12);
         Self {
             ln_1,
             ln_2,
@@ -142,6 +167,11 @@ impl<'a> std::fmt::Debug for Linear<'a> {
 }
 
 impl<'a> Linear<'a> {
+    #[cfg(test)]
+    pub fn new(weight: Tensor<'a>, bias: Tensor<'a>) -> Self {
+        Self { weight, bias }
+    }
+
     fn from(weight: TensorView<'a>, bias: TensorView<'a>) -> Self {
         let weight: Tensor = weight.into();
         let bias: Tensor = bias.into();
@@ -149,7 +179,10 @@ impl<'a> Linear<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
-        let c = tensor.addmm(&self.weight, &self.bias);
+        let m = tensor.shape()[0];
+        let n = self.weight.shape()[1];
+        let mut c = OwnedTensor::new(vec![0.0; n * m], vec![m, n]);
+        addmm(tensor, &self.weight, &self.bias, &mut c);
         *tensor = c;
     }
 }
@@ -173,7 +206,10 @@ impl<'a> UnbiasedLinear<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
-        let c = tensor.matmul_t(&self.weight);
+        let m = tensor.shape()[0];
+        let n = self.weight.shape()[0];
+        let mut c = OwnedTensor::new(vec![0.0; n * m], vec![m, n]);
+        matmul_t(tensor, &self.weight, &mut c);
         *tensor = c;
     }
 }
@@ -193,8 +229,9 @@ impl<'a> Embedding<'a> {
         let hidden_dim = self.weight.shape()[1];
         let shape = vec![ids.len(), hidden_dim];
         let data = vec![0.0; ids.len() * hidden_dim];
-        let tensor = OwnedTensor::new(data, shape);
-        tensor.select(ids, &self.weight)
+        let mut tensor = OwnedTensor::new(data, shape);
+        select(ids, &self.weight, &mut tensor);
+        tensor
     }
 }
 
@@ -256,7 +293,7 @@ impl<'a> Gpt2<'a> {
         let mut tensor = self.wte.forward(ids);
         let positions: Vec<_> = (0..ids.len() as u32).collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
-        tensor.add_tensor(&position_embeddings);
+        add_owned(&position_embeddings, &mut tensor);
         self.h.forward(&mut tensor);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
@@ -267,13 +304,8 @@ impl<'a> Gpt2<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::simplify;
     use memmap2::MmapOptions;
-
-    fn simplify(data: &[f32]) -> Vec<f32> {
-        let precision = 3;
-        let m = 10.0 * 10.0f32.powf(precision as f32);
-        data.iter().map(|x| (x * m).round() / m).collect()
-    }
 
     #[test]
     fn tensor_values() {
@@ -364,5 +396,82 @@ mod tests {
             // Values obtained through python
             [0.0, -2.0, 1.0, 2.0]
         );
+    }
+
+    #[test]
+    fn attention() {
+        let filename = "model.safetensors";
+        let file = std::fs::File::open(filename).unwrap();
+        let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let tensors = SafeTensors::deserialize(&buffer).unwrap();
+        let attention = Attention::from_tensors(0, &tensors, 12);
+        let data = attention.c_attn.weight.data();
+        assert_eq!(
+            simplify(&data[..10]),
+            // Values obtained through python
+            [
+                -0.4738, -0.2614, -0.0978, -0.3499, 0.2243, -0.0429, 0.4187, 0.1744, -0.1883,
+                0.1836
+            ]
+        );
+        assert_eq!(
+            simplify(&data[data.len() - 10..]),
+            // Values obtained through python
+            [0.0015, -0.0719, 0.0741, 0.0541, 0.0540, 0.0205, 0.0176, -0.0046, 0.0070, 0.0198]
+        );
+
+        let hidden_dim = 8;
+        let n_head = 2;
+        let data = (0..hidden_dim * hidden_dim * 3)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = Tensor::new(&data, vec![hidden_dim, hidden_dim * 3]);
+        let data = (0..hidden_dim * 3).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = Tensor::new(&data, vec![hidden_dim * 3]);
+        let c_attn = Linear::new(weight, bias);
+
+        let data = (0..hidden_dim * hidden_dim)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = Tensor::new(&data, vec![hidden_dim, hidden_dim]);
+        let data = (0..hidden_dim).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = Tensor::new(&data, vec![hidden_dim]);
+        let c_proj = Linear::new(weight, bias);
+
+        let attention = Attention {
+            c_attn,
+            c_proj,
+            n_head,
+        };
+        let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![1, hidden_dim]);
+        attention.forward(&mut input);
+        #[allow(clippy::excessive_precision)]
+        {
+            assert_eq!(
+                input.data(),
+                // Values gotten from Python
+                // ```python
+                // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+                // config = GPT2Config(n_embd=8, n_head=2)
+                // attn = GPT2Attention(config)
+                // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+                // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+                // attn.c_proj.weight = torch.nn.Parameter(torch.arange(attn.c_proj.weight.nelement()).view(attn.c_proj.weight.shape).float())
+                // attn.c_proj.bias = torch.nn.Parameter(torch.arange(attn.c_proj.bias.nelement()).view(attn.c_proj.bias.shape).float())
+                // input = torch.ones((1, 1, 8))
+                // print(attn(input)[0].view(-1))
+                // ```
+                &[
+                    238_103.703_1,
+                    246_475.203_1,
+                    254_846.671_9,
+                    263_218.156_2,
+                    271_589.656_2,
+                    279_961.125_0,
+                    288_332.593_8,
+                    296_704.125_0
+                ]
+            );
+        }
     }
 }
