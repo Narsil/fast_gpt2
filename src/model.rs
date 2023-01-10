@@ -1,8 +1,5 @@
-use crate::ops::{
-    add, add_owned, addmm, causal_softmax, matmul_owned, matmul_t, matmul_t_owned, mul, normalize,
-    select,
-};
-use crate::tensor::{OwnedTensor, Tensor};
+use crate::ops::{add, addmm, causal_softmax, matmul_t, mul, normalize, select};
+use crate::tensor::{OwnedTensor, Tensor, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
 pub struct Mlp<'a> {
@@ -67,14 +64,14 @@ impl<'a> Attention<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
+        let sequence_length = tensor.shape()[0];
         let hidden_dim = tensor.shape()[1];
         self.c_attn.forward(tensor);
-        let sequence_length = tensor.shape()[0];
         let mut chunks = tensor.data.chunks(hidden_dim);
-        let shape = vec![1, hidden_dim];
+        let shape = vec![sequence_length, hidden_dim];
         let mut q = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
-        let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
-        let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
+        let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
+        // let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
         let mut qk = OwnedTensor::new(
             vec![0.0; sequence_length * sequence_length],
             vec![sequence_length, sequence_length],
@@ -86,10 +83,12 @@ impl<'a> Attention<'a> {
         // q is now NH, S, H
         // split_heads(n_head, &mut k);
         // k is now NH, S, H
-        matmul_t_owned(&q, &k, &mut qk);
+        matmul_t(&q, &k, &mut qk);
         // qk is now NH, S, S
-        causal_softmax(&mut qk);
-        matmul_owned(&qk, &v, &mut q);
+        // println!("Qk {:?}", qk.shape());
+        // causal_softmax(&mut qk);
+        causal_softmax(tensor);
+        // matmul(&qk, &v, &mut q);
         // q is now NH, S, H
         // TODO FUSE
         // fuse_heads(n_head, &mut q);
@@ -154,8 +153,8 @@ impl<'a> Gpt2Model<'a> {
 }
 
 pub struct Linear<'a> {
-    weight: Tensor<'a>,
-    bias: Tensor<'a>,
+    weight: ViewTensor<'a>,
+    bias: ViewTensor<'a>,
 }
 
 impl<'a> std::fmt::Debug for Linear<'a> {
@@ -168,13 +167,13 @@ impl<'a> std::fmt::Debug for Linear<'a> {
 
 impl<'a> Linear<'a> {
     #[cfg(test)]
-    pub fn new(weight: Tensor<'a>, bias: Tensor<'a>) -> Self {
+    pub fn new(weight: ViewTensor<'a>, bias: ViewTensor<'a>) -> Self {
         Self { weight, bias }
     }
 
     fn from(weight: TensorView<'a>, bias: TensorView<'a>) -> Self {
-        let weight: Tensor = weight.into();
-        let bias: Tensor = bias.into();
+        let weight: ViewTensor = weight.into();
+        let bias: ViewTensor = bias.into();
         Self { weight, bias }
     }
 
@@ -188,7 +187,7 @@ impl<'a> Linear<'a> {
 }
 
 pub struct UnbiasedLinear<'a> {
-    weight: Tensor<'a>,
+    weight: ViewTensor<'a>,
 }
 
 impl<'a> std::fmt::Debug for UnbiasedLinear<'a> {
@@ -201,7 +200,7 @@ impl<'a> std::fmt::Debug for UnbiasedLinear<'a> {
 
 impl<'a> UnbiasedLinear<'a> {
     fn from(weight: TensorView<'a>) -> Self {
-        let weight: Tensor = weight.into();
+        let weight: ViewTensor = weight.into();
         Self { weight }
     }
 
@@ -215,12 +214,12 @@ impl<'a> UnbiasedLinear<'a> {
 }
 
 pub struct Embedding<'a> {
-    weight: Tensor<'a>,
+    weight: ViewTensor<'a>,
 }
 
 impl<'a> Embedding<'a> {
     fn from(weight: TensorView<'a>) -> Self {
-        let weight: Tensor = weight.into();
+        let weight: ViewTensor = weight.into();
         Self { weight }
     }
 
@@ -236,15 +235,15 @@ impl<'a> Embedding<'a> {
 }
 
 pub struct LayerNorm<'a> {
-    weight: Tensor<'a>,
-    bias: Tensor<'a>,
+    weight: ViewTensor<'a>,
+    bias: ViewTensor<'a>,
     epsilon: f32,
 }
 
 impl<'a> LayerNorm<'a> {
     fn from(weight: TensorView<'a>, bias: TensorView<'a>) -> Self {
-        let weight: Tensor = weight.into();
-        let bias: Tensor = bias.into();
+        let weight: ViewTensor = weight.into();
+        let bias: ViewTensor = bias.into();
         let epsilon = 1e-5;
         Self {
             weight,
@@ -293,7 +292,7 @@ impl<'a> Gpt2<'a> {
         let mut tensor = self.wte.forward(ids);
         let positions: Vec<_> = (0..ids.len() as u32).collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
-        add_owned(&position_embeddings, &mut tensor);
+        add(&position_embeddings, &mut tensor);
         self.h.forward(&mut tensor);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
@@ -304,6 +303,7 @@ impl<'a> Gpt2<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tensor::{OwnedTensor, ViewTensor};
     use crate::tests::simplify;
     use memmap2::MmapOptions;
 
@@ -313,7 +313,7 @@ mod tests {
         let file = std::fs::File::open(filename).unwrap();
         let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
         let tensors = SafeTensors::deserialize(&buffer).unwrap();
-        let tensor: Tensor = tensors.tensor("ln_f.weight").unwrap().into();
+        let tensor: ViewTensor = tensors.tensor("ln_f.weight").unwrap().into();
         let data = tensor.data();
         assert_eq!(
             simplify(&data[..10]),
@@ -380,8 +380,8 @@ mod tests {
             [1.1758, 1.4514, 1.1525, 1.1731, 4.2194, 1.1660, 1.1625, 1.1034, 1.0980, 1.2070]
         );
 
-        let weight = Tensor::new(&[-1.0, 4.0], vec![2]);
-        let bias = Tensor::new(&[1.0, 2.0], vec![2]);
+        let weight = ViewTensor::new(&[-1.0, 4.0], vec![2]);
+        let bias = ViewTensor::new(&[1.0, 2.0], vec![2]);
         let epsilon = 1e-5;
         let layer_norm = LayerNorm {
             weight,
@@ -425,17 +425,17 @@ mod tests {
         let data = (0..hidden_dim * hidden_dim * 3)
             .map(|i| i as f32)
             .collect::<Vec<_>>();
-        let weight = Tensor::new(&data, vec![hidden_dim, hidden_dim * 3]);
+        let weight = ViewTensor::new(&data, vec![hidden_dim, hidden_dim * 3]);
         let data = (0..hidden_dim * 3).map(|i| i as f32).collect::<Vec<_>>();
-        let bias = Tensor::new(&data, vec![hidden_dim * 3]);
+        let bias = ViewTensor::new(&data, vec![hidden_dim * 3]);
         let c_attn = Linear::new(weight, bias);
 
         let data = (0..hidden_dim * hidden_dim)
             .map(|i| i as f32)
             .collect::<Vec<_>>();
-        let weight = Tensor::new(&data, vec![hidden_dim, hidden_dim]);
+        let weight = ViewTensor::new(&data, vec![hidden_dim, hidden_dim]);
         let data = (0..hidden_dim).map(|i| i as f32).collect::<Vec<_>>();
-        let bias = Tensor::new(&data, vec![hidden_dim]);
+        let bias = ViewTensor::new(&data, vec![hidden_dim]);
         let c_proj = Linear::new(weight, bias);
 
         let attention = Attention {

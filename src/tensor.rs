@@ -1,29 +1,44 @@
 use safetensors::tensor::{Dtype, TensorView};
 
-pub struct Tensor<'data> {
+pub trait Tensor {
+    fn as_ptr(&self) -> *const f32;
+    fn shape(&self) -> &[usize];
+    fn data(&self) -> &[f32];
+}
+
+pub trait TensorMut {
+    fn data_mut(&mut self) -> &mut [f32];
+    fn as_mut_ptr(&mut self) -> *mut f32 {
+        self.data_mut().as_mut_ptr()
+    }
+}
+
+pub struct ViewTensor<'data> {
     pub(crate) shape: Vec<usize>,
     pub(crate) data: &'data [f32],
 }
 
-impl<'data> Tensor<'data> {
-    pub fn new(data: &'data [f32], shape: Vec<usize>) -> Self {
-        Self { shape, data }
-    }
-
-    pub fn as_ptr(&self) -> *const f32 {
+impl<'data> Tensor for ViewTensor<'data> {
+    fn as_ptr(&self) -> *const f32 {
         self.data.as_ptr()
     }
 
-    pub fn shape(&self) -> &[usize] {
+    fn shape(&self) -> &[usize] {
         &self.shape
     }
 
-    pub fn data(&self) -> &[f32] {
+    fn data(&self) -> &[f32] {
         self.data
     }
 }
 
-impl<'data> From<TensorView<'data>> for Tensor<'data> {
+impl<'data> ViewTensor<'data> {
+    pub fn new(data: &'data [f32], shape: Vec<usize>) -> Self {
+        Self { shape, data }
+    }
+}
+
+impl<'data> From<TensorView<'data>> for ViewTensor<'data> {
     fn from(view: TensorView<'data>) -> Self {
         assert_eq!(view.dtype(), Dtype::F32);
         let v = view.data();
@@ -52,25 +67,27 @@ pub struct OwnedTensor {
     pub(crate) data: Vec<f32>,
 }
 
-impl OwnedTensor {
-    pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Self {
-        Self { shape, data }
-    }
-
-    pub fn as_ptr(&self) -> *const f32 {
+impl Tensor for OwnedTensor {
+    fn as_ptr(&self) -> *const f32 {
         self.data.as_ptr()
     }
 
-    pub fn as_mut_ptr(&mut self) -> *mut f32 {
-        self.data.as_mut_ptr()
-    }
-
-    pub fn shape(&self) -> &[usize] {
+    fn shape(&self) -> &[usize] {
         &self.shape
     }
 
-    #[cfg(test)]
-    pub fn data(&self) -> &[f32] {
+    fn data(&self) -> &[f32] {
         &self.data
+    }
+}
+
+impl TensorMut for OwnedTensor {
+    fn data_mut(&mut self) -> &mut [f32] {
+        &mut self.data
+    }
+}
+impl OwnedTensor {
+    pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Self {
+        Self { shape, data }
     }
 }

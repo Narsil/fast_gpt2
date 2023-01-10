@@ -56,14 +56,16 @@ pub async fn run() -> Result<(), Gpt2Error> {
     println!("Tokenizer {:?}", start.elapsed());
 
     let gpt2 = Gpt2::from_tensors(&tensors);
-    let string = "test";
+    let string = "This is a test";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
-    for _i in 0..1 {
+    let mut ids = encoded.get_ids().to_vec();
+    for _i in 0..5 {
         let start = std::time::Instant::now();
-        let _logits = gpt2.forward(encoded.get_ids());
+        let _logits = gpt2.forward(&ids);
         println!("Inference {:?}", start.elapsed());
+        ids.push(1);
     }
     println!("Total Inference {:?}", start.elapsed());
     Ok(())
