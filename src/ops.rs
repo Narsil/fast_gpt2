@@ -189,7 +189,9 @@ pub fn normalize<TM: Tensor + TensorMut>(x: &mut TM, epsilon: f32) {
         .for_each(|(i, v)| *v = (*v - mean[i / size]) / (var[i / size] + epsilon).sqrt());
 }
 
+#[cfg(test)]
 static mut MAX: [f32; 768] = [0.0; 768];
+#[cfg(test)]
 static mut SOFTMAX: [f32; 768] = [0.0; 768];
 // static mut SOFTMAX: Vec<f32> = vec![0.0; 768];
 
@@ -234,6 +236,7 @@ pub(crate) fn softmax<T: Tensor + TensorMut>(x: &mut T) {
         .for_each(|(i, v)| unsafe { *v /= SOFTMAX[i / n] });
 }
 
+#[cfg(test)]
 #[inline]
 pub(crate) fn causal_softmax<TM: Tensor + TensorMut>(x: &mut TM) {
     assert_eq!(x.shape().len(), 2);
@@ -296,6 +299,110 @@ pub(crate) fn causal_softmax<TM: Tensor + TensorMut>(x: &mut TM) {
             *v = 0.0;
         }
     });
+}
+
+fn attention_matmul_qk<T: Tensor, TM: Tensor + TensorMut>(qkv: &T, qk: &mut TM) {
+    // qkv = [S, 3H]
+    // qk = [NH, S, S]
+    // q = qkv[:, :H], k = qkv[:, H: 2H], v = qkv[:, 2H: 3H]
+    //
+    // --HEADS--
+    // q[S, H] -> q[S, NH, HH] -> q[NH, S, HH]
+    // k[S, H] -> k[S, NH, HH] -> k[NH, S, HH]
+    // qk[i, j, k] = sum(q[i, j, l] * k[i, k, l]) over l
+    let num_heads = qk.shape()[0];
+    let sequence_length = qk.shape()[1];
+    let hidden_dim3 = qkv.shape()[1];
+    assert_eq!(qk.shape()[2], sequence_length);
+    assert_eq!(qkv.shape()[0], sequence_length);
+    assert_eq!(hidden_dim3 % 3, 0);
+    let hidden_dim = hidden_dim3 / 3;
+    assert_eq!(hidden_dim % num_heads, 0);
+    let head_dim = hidden_dim / num_heads;
+
+    (0..num_heads).for_each(|i| {
+        (0..sequence_length).for_each(|j| {
+            (0..sequence_length).for_each(|k| {
+                let index = i * sequence_length * sequence_length + j * sequence_length + k;
+                qk.data_mut()[index] = (0..head_dim)
+                    .map(|l| {
+                        let index_q = j * hidden_dim3 + i * head_dim + l;
+                        let index_k = j * hidden_dim3 + i * head_dim + l + hidden_dim;
+                        qkv.data()[index_q] * qkv.data()[index_k]
+                    })
+                    .sum();
+            });
+        });
+    });
+}
+
+fn attention_causal_softmax<TM: Tensor + TensorMut>(_qk: &mut TM) {
+    todo!();
+}
+fn attention_matmul_qkv<QK: Tensor, T: Tensor, TM: Tensor + TensorMut>(
+    qk: &QK,
+    qkv: &T,
+    out: &mut TM,
+) {
+    // qkv = [S, 3H]
+    // v = qkv[S, 2H: 3H]
+    // out = [S, H]
+    //
+    // --HEADS--
+    // v[S, H] -> v[S, NH, HH] -> v[NH, S, HH]
+    // out = [S, H]
+    // qk = [NH, S, S]
+    // v[NH, S, HH]
+    // out[i, j, k] = sum(qk[i, j, l] * v[i, l, k]) over l
+    let num_heads = qk.shape()[0];
+    let sequence_length = qk.shape()[1];
+    let hidden_dim = out.shape()[1];
+    assert_eq!(qk.shape()[2], sequence_length);
+    assert_eq!(out.shape()[0], sequence_length);
+    assert_eq!(hidden_dim % num_heads, 0);
+    let head_dim = hidden_dim / num_heads;
+    assert_eq!(qkv.shape(), vec![sequence_length, hidden_dim * 3]);
+    (0..num_heads).for_each(|head_index| {
+        (0..sequence_length).for_each(|lseq_index| {
+            (0..head_dim).for_each(|hh| {
+                let index = lseq_index * hidden_dim + head_index * head_dim + hh;
+                // println!("{:?} -> {lseq_index:?} ", out.shape());
+                out.data_mut()[index] = (0..sequence_length)
+                    .map(|l| {
+                        let index_qk = head_index * sequence_length * sequence_length
+                            + lseq_index * sequence_length
+                            + l;
+                        let index_v = lseq_index * hidden_dim * 3
+                            + head_index * head_dim
+                            + hh
+                            + hidden_dim * 2;
+                        qk.data()[index_qk] * qkv.data()[index_v]
+                    })
+                    .sum();
+            });
+        })
+    })
+}
+
+pub fn attention<T: Tensor, TM: Tensor + TensorMut, OUT: Tensor + TensorMut>(
+    qkv: &T,
+    qk: &mut TM,
+    out: &mut OUT,
+) {
+    let sequence_length = qkv.shape()[0];
+    let hidden_dim3 = qkv.shape()[1];
+    assert_eq!(hidden_dim3 % 3, 0);
+    let hidden_dim = hidden_dim3 / 3;
+    let num_heads = qk.shape()[0];
+    assert_eq!(
+        qk.shape(),
+        vec![num_heads, sequence_length, sequence_length]
+    );
+    assert_eq!(out.shape(), vec![sequence_length, hidden_dim]);
+
+    attention_matmul_qk(qkv, qk);
+    attention_causal_softmax(qk);
+    attention_matmul_qkv(qk, qkv, out);
 }
 
 #[cfg(test)]

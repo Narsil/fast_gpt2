@@ -1,4 +1,4 @@
-use crate::ops::{add, addmm, causal_softmax, matmul_t, mul, normalize, select};
+use crate::ops::{add, addmm, attention, matmul_t, mul, normalize, select};
 use crate::tensor::{OwnedTensor, Tensor, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
@@ -35,11 +35,11 @@ impl<'a> Mlp<'a> {
 pub struct Attention<'a> {
     c_attn: Linear<'a>,
     c_proj: Linear<'a>,
-    n_head: usize,
+    num_heads: usize,
 }
 
 impl<'a> Attention<'a> {
-    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>, n_head: usize) -> Self {
+    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>, num_heads: usize) -> Self {
         let c_attn = Linear::from(
             tensors
                 .tensor(&format!("h.{index}.attn.c_attn.weight"))
@@ -59,7 +59,7 @@ impl<'a> Attention<'a> {
         Self {
             c_attn,
             c_proj,
-            n_head,
+            num_heads,
         }
     }
 
@@ -67,34 +67,40 @@ impl<'a> Attention<'a> {
         let sequence_length = tensor.shape()[0];
         let hidden_dim = tensor.shape()[1];
         self.c_attn.forward(tensor);
-        let mut chunks = tensor.data.chunks(hidden_dim);
-        let shape = vec![sequence_length, hidden_dim];
-        let mut q = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
-        let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
-        // let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
+        let num_heads = self.num_heads;
         let mut qk = OwnedTensor::new(
-            vec![0.0; sequence_length * sequence_length],
-            vec![sequence_length, sequence_length],
+            vec![0.0; num_heads * sequence_length * sequence_length],
+            vec![num_heads, sequence_length, sequence_length],
         );
+        let mut qv = OwnedTensor::new(
+            vec![0.0; sequence_length * hidden_dim],
+            vec![sequence_length, hidden_dim],
+        );
+        attention(tensor, &mut qk, &mut qv);
+        // let mut chunks = tensor.data.chunks(hidden_dim);
+        // let shape = vec![sequence_length, hidden_dim];
+        // let mut q = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
+        // let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
+        // // let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
 
-        // TODO SPLIT
-        let _head_dim = hidden_dim / self.n_head;
-        // split_heads(n_head, &mut q);
-        // q is now NH, S, H
-        // split_heads(n_head, &mut k);
-        // k is now NH, S, H
-        matmul_t(&q, &k, &mut qk);
-        // qk is now NH, S, S
-        // println!("Qk {:?}", qk.shape());
-        // causal_softmax(&mut qk);
-        causal_softmax(tensor);
+        // // TODO SPLIT
+        // let _head_dim = hidden_dim / self.n_head;
+        // // split_heads(n_head, &mut q);
+        // // q is now NH, S, H
+        // // split_heads(n_head, &mut k);
+        // // k is now NH, S, H
+        // matmul_t(&q, &k, &mut qk);
+        // // qk is now NH, S, S
+        // // println!("Qk {:?}", qk.shape());
+        // // causal_softmax(&mut qk);
+        // causal_softmax(tensor);
         // matmul(&qk, &v, &mut q);
         // q is now NH, S, H
         // TODO FUSE
         // fuse_heads(n_head, &mut q);
         // q is now S, hidden
-        self.c_proj.forward(&mut q);
-        *tensor = q;
+        self.c_proj.forward(&mut qv);
+        *tensor = qv;
     }
 }
 
@@ -421,7 +427,7 @@ mod tests {
         );
 
         let hidden_dim = 8;
-        let n_head = 2;
+        let num_heads = 2;
         let data = (0..hidden_dim * hidden_dim * 3)
             .map(|i| i as f32)
             .collect::<Vec<_>>();
@@ -441,7 +447,7 @@ mod tests {
         let attention = Attention {
             c_attn,
             c_proj,
-            n_head,
+            num_heads,
         };
         let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![1, hidden_dim]);
         attention.forward(&mut input);
