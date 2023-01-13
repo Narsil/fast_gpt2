@@ -1,4 +1,4 @@
-use crate::ops::{add, addmm, attention, matmul_t, mul, normalize, select};
+use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select};
 use crate::tensor::{OwnedTensor, Tensor, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
@@ -28,6 +28,7 @@ impl<'a> Mlp<'a> {
 
     fn forward(&self, tensor: &mut OwnedTensor) {
         self.c_fc.forward(tensor);
+        gelu(tensor);
         self.c_proj.forward(tensor);
     }
 }
@@ -63,10 +64,12 @@ impl<'a> Attention<'a> {
         }
     }
 
-    fn forward(&self, tensor: &mut OwnedTensor) {
-        let sequence_length = tensor.shape()[0];
-        let hidden_dim = tensor.shape()[1];
-        self.c_attn.forward(tensor);
+    pub fn forward(&self, hidden_states: &mut OwnedTensor) {
+        assert_eq!(hidden_states.shape().len(), 2);
+        let sequence_length = hidden_states.shape()[0];
+        let hidden_dim = hidden_states.shape()[1];
+        self.c_attn.forward(hidden_states);
+        let qkv = hidden_states;
         let num_heads = self.num_heads;
         let mut qk = OwnedTensor::new(
             vec![0.0; num_heads * sequence_length * sequence_length],
@@ -76,31 +79,14 @@ impl<'a> Attention<'a> {
             vec![0.0; sequence_length * hidden_dim],
             vec![sequence_length, hidden_dim],
         );
-        attention(tensor, &mut qk, &mut qv);
-        // let mut chunks = tensor.data.chunks(hidden_dim);
-        // let shape = vec![sequence_length, hidden_dim];
-        // let mut q = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape.clone());
-        // let k = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
-        // // let v = OwnedTensor::new(chunks.next().unwrap().to_vec(), shape);
-
-        // // TODO SPLIT
-        // let _head_dim = hidden_dim / self.n_head;
-        // // split_heads(n_head, &mut q);
-        // // q is now NH, S, H
-        // // split_heads(n_head, &mut k);
-        // // k is now NH, S, H
-        // matmul_t(&q, &k, &mut qk);
-        // // qk is now NH, S, S
-        // // println!("Qk {:?}", qk.shape());
-        // // causal_softmax(&mut qk);
-        // causal_softmax(tensor);
-        // matmul(&qk, &v, &mut q);
-        // q is now NH, S, H
-        // TODO FUSE
-        // fuse_heads(n_head, &mut q);
-        // q is now S, hidden
+        attention(qkv, &mut qk, &mut qv);
+        // println!("Before proj {:?}", qv.shape());
+        // println!("Before proj {:?}", &qv.data()[qv.data().len() - 10..]);
         self.c_proj.forward(&mut qv);
-        *tensor = qv;
+        // println!("After proj {:?}", qv.shape());
+        // println!("After proj {:?}", &qv.data()[qv.data().len() - 10..]);
+        // println!("====");
+        *qkv = qv;
     }
 }
 
@@ -132,10 +118,34 @@ impl<'a> Gpt2Layer<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
+        // println!("In {:?}", &tensor.data()[tensor.data().len() - 10..]);
+        let residual = tensor.clone();
         self.ln_1.forward(tensor);
+        // println!("After ln1 {:?}", &tensor.data()[tensor.data().len() - 10..]);
         self.attention.forward(tensor);
+        // println!(
+        //     "After attention {:?}",
+        //     &tensor.data()[tensor.data().len() - 10..]
+        // );
+        add(&residual, tensor);
+        // println!(
+        //     "After residual1 {:?}",
+        //     &tensor.data()[tensor.data().len() - 10..]
+        // );
+        let residual = tensor.clone();
         self.ln_2.forward(tensor);
+        // println!(
+        //     "After ln_2 {:?}",
+        //     &tensor.data()[tensor.data().len() - 10..]
+        // );
         self.mlp.forward(tensor);
+        // println!("After mlp {:?}", &tensor.data()[tensor.data().len() - 10..]);
+        add(&residual, tensor);
+        // println!(
+        //     "After layer {:?}",
+        //     &tensor.data()[tensor.data().len() - 10..]
+        // );
+        // todo!();
     }
 }
 
@@ -183,7 +193,7 @@ impl<'a> Linear<'a> {
         Self { weight, bias }
     }
 
-    fn forward(&self, tensor: &mut OwnedTensor) {
+    pub fn forward(&self, tensor: &mut OwnedTensor) {
         let m = tensor.shape()[0];
         let n = self.weight.shape()[1];
         let mut c = OwnedTensor::new(vec![0.0; n * m], vec![m, n]);
@@ -457,9 +467,12 @@ mod tests {
                 input.data(),
                 // Values gotten from Python
                 // ```python
+                // import torch
                 // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
                 // config = GPT2Config(n_embd=8, n_head=2)
                 // attn = GPT2Attention(config)
+                // # remove dropout
+                // attn.eval()
                 // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
                 // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
                 // attn.c_proj.weight = torch.nn.Parameter(torch.arange(attn.c_proj.weight.nelement()).view(attn.c_proj.weight.shape).float())
@@ -467,16 +480,53 @@ mod tests {
                 // input = torch.ones((1, 1, 8))
                 // print(attn(input)[0].view(-1))
                 // ```
-                &[
-                    238_103.703_1,
-                    246_475.203_1,
-                    254_846.671_9,
-                    263_218.156_2,
-                    271_589.656_2,
-                    279_961.125_0,
-                    288_332.593_8,
-                    296_704.125_0
-                ]
+                &[192864., 199645., 206426., 213207., 219988., 226769., 233550., 240331.]
+            );
+        }
+    }
+
+    #[test]
+    fn mlp() {
+        let hidden_dim = 8;
+        let data = (0..hidden_dim * hidden_dim * 4)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = ViewTensor::new(&data, vec![hidden_dim, hidden_dim * 4]);
+        let data = (0..hidden_dim * 4).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = ViewTensor::new(&data, vec![hidden_dim * 4]);
+        let c_fc = Linear::new(weight, bias);
+
+        let data = (0..hidden_dim * hidden_dim * 4)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = ViewTensor::new(&data, vec![hidden_dim * 4, hidden_dim]);
+        let data = (0..hidden_dim).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = ViewTensor::new(&data, vec![hidden_dim]);
+        let c_proj = Linear::new(weight, bias);
+
+        let attention = Mlp { c_fc, c_proj };
+        let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![1, hidden_dim]);
+        attention.forward(&mut input);
+        #[allow(clippy::excessive_precision)]
+        {
+            assert_eq!(
+                input.data(),
+                // Values gotten from Python
+                // ```python
+                // import torch
+                // from transformers.models.gpt2.modeling_gpt2 import GPT2MLP, GPT2Config
+                // config = GPT2Config(n_embd=8, n_head=2, activation_function="gelu_new")
+                // mlp = GPT2MLP(config=config, intermediate_size = config.n_embd * 4)
+                // # remove dropout
+                // mlp.eval()
+                // mlp.c_fc.weight = torch.nn.Parameter(torch.arange(mlp.c_fc.weight.nelement()).view(mlp.c_fc.weight.shape).float())
+                // mlp.c_fc.bias = torch.nn.Parameter(torch.arange(mlp.c_fc.bias.nelement()).view(mlp.c_fc.bias.shape).float())
+                // mlp.c_proj.weight = torch.nn.Parameter(torch.arange(mlp.c_proj.weight.nelement()).view(mlp.c_proj.weight.shape).float())
+                // mlp.c_proj.bias = torch.nn.Parameter(torch.arange(mlp.c_proj.bias.nelement()).view(mlp.c_proj.bias.shape).float())
+                // input = torch.ones((1, 1, 8))
+                // print(mlp(input)[0].view(-1))
+                // ```
+                &[4305280., 4338417., 4371554., 4404691., 4437828., 4470965., 4504102., 4537239.]
             );
         }
     }

@@ -4,6 +4,7 @@ mod ops;
 mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
+use crate::ops::special_argmax;
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
 use std::fs::File;
@@ -56,17 +57,19 @@ pub async fn run() -> Result<(), Gpt2Error> {
     println!("Tokenizer {:?}", start.elapsed());
 
     let gpt2 = Gpt2::from_tensors(&tensors);
-    let string = "This is a test";
+    let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
     let mut ids = encoded.get_ids().to_vec();
-    for _i in 0..5 {
+    for _i in 0..10 {
         let start = std::time::Instant::now();
-        let _logits = gpt2.forward(&ids);
-        println!("Inference {:?}", start.elapsed());
-        ids.push(1);
+        let logits = gpt2.forward(&ids);
+        let new_id = special_argmax(&logits);
+        ids.push(new_id as u32);
+        println!("Loop in {:?}", start.elapsed());
     }
+    println!("Result {:?}", tokenizer.decode(ids, false));
     println!("Total Inference {:?}", start.elapsed());
     Ok(())
 }

@@ -61,7 +61,7 @@ impl<'data> From<TensorView<'data>> for ViewTensor<'data> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OwnedTensor {
     pub(crate) shape: Vec<usize>,
     pub(crate) data: Vec<f32>,
