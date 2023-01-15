@@ -1,8 +1,6 @@
 //! This build script emits the openblas linking directive if requested
 
-pub const MKL_VERSION: &str = "2022.1.0";
-
-#[cfg(feature = "intel-mkl")]
+#[cfg(any(feature = "intel-mkl", feature = "cblas"))]
 #[derive(PartialEq, Eq)]
 enum Library {
     Static,
@@ -111,6 +109,21 @@ fn suggest_setvars_cmd(root: &str) -> String {
 
 fn main() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build.rs");
+
+    println!("cargo:rerun-if-env-changed=STATIC");
+    #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
+    let library = if std::env::var("STATIC").unwrap_or("0".to_string()) == "1" {
+        Library::Static
+    } else {
+        Library::Dynamic
+    };
+    #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
+    let link_type: &str = if Library::Static == library {
+        "static"
+    } else {
+        "dylib"
+    };
+
     #[cfg(feature = "cblas")]
     println!("cargo:rustc-link-lib=dylib=cblas");
 
@@ -131,22 +144,13 @@ fn main() -> Result<(), BuildError> {
             }
         };
 
-        println!("cargo:rerun-if-env-changed=STATIC");
-        let library = if let Ok(var) = std::env::var("STATIC") {
-            if var == "1" {
-                Library::Static
-            } else {
-                Library::Dynamic
-            }
-        } else {
-            Library::Dynamic
-        };
-
         if library == Library::Dynamic {
             // check to make sure that things in `SHARED_LIB_DIRS` are in `$LD_DIR`.
             let path = path.replace('\\', "/");
             for shared_lib_dir in SHARED_LIB_DIRS {
-                let versioned_dir = shared_lib_dir.replace("latest", MKL_VERSION);
+                println!("cargo:rerun-if-env-changed=MKL_VERSION");
+                let mkl_version = std::env::var("MKL_VERSION").unwrap_or("2022.1.0".to_string());
+                let versioned_dir = shared_lib_dir.replace("latest", &mkl_version);
 
                 println!("Checking that '{shared_lib_dir}' or '{versioned_dir}' is in {LD_DIR}");
                 if !path.contains(shared_lib_dir) && !path.contains(&versioned_dir) {
@@ -175,11 +179,6 @@ fn main() -> Result<(), BuildError> {
             println!("cargo:rustc-link-search={}", lib_dir.display());
         }
 
-        let link_type: &str = if Library::Static == library {
-            "static"
-        } else {
-            "dylib"
-        };
         let lib_postfix: &str = if cfg!(windows) && library == Library::Static {
             "_dll"
         } else {
@@ -193,11 +192,11 @@ fn main() -> Result<(), BuildError> {
             println!("cargo:rustc-link-lib=dylib={THREADING_LIB}");
         }
 
-        // if !cfg!(windows) {
-        //     println!("cargo:rustc-link-lib=pthread");
-        //     println!("cargo:rustc-link-lib=m");
-        //     println!("cargo:rustc-link-lib=dl");
-        // }
+        if !cfg!(windows) {
+            println!("cargo:rustc-link-lib=pthread");
+            println!("cargo:rustc-link-lib=m");
+            println!("cargo:rustc-link-lib=dl");
+        }
 
         #[cfg(target_os = "macos")]
         {
