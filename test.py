@@ -1,5 +1,5 @@
-from transformers import pipeline
 import datetime
+from transformers import pipeline
 
 start = datetime.datetime.now()
 pipe = pipeline(task="text-generation", model="gpt2", do_sample=False)
