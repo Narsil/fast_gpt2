@@ -1,9 +1,10 @@
-mod download;
+pub mod download;
 mod model;
 mod ops;
 mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
+use crate::ops::special_argmax;
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
 use std::fs::File;
@@ -33,7 +34,7 @@ pub enum Gpt2Error {
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
     // curl https://huggingface.co/gpt2/resolve/main/model.safetensors
-    let filename = "/tmp/model.safetensors";
+    let filename = "model.safetensors";
     let max_files = 100;
     let chunk_size = 10_000_000;
     if !std::path::Path::new(filename).exists() {
@@ -46,7 +47,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let tensors = SafeTensors::deserialize(&buffer)?;
     println!("Safetensors {:?}", start.elapsed());
 
-    let filename = "/tmp/tokenizer.json";
+    let filename = "tokenizer.json";
     if !std::path::Path::new(filename).exists() {
         let url = "https://huggingface.co/gpt2/resolve/main/tokenizer.json";
         println!("Downloading {url:?} into {filename:?}");
@@ -56,15 +57,28 @@ pub async fn run() -> Result<(), Gpt2Error> {
     println!("Tokenizer {:?}", start.elapsed());
 
     let gpt2 = Gpt2::from_tensors(&tensors);
-    let string = "This is a test";
+    let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
-    for _i in 0..5 {
+    let mut ids = encoded.get_ids().to_vec();
+    for _i in 0..10 {
         let start = std::time::Instant::now();
-        let _logits = gpt2.forward(encoded.get_ids());
-        println!("Inference {:?}", start.elapsed());
+        let logits = gpt2.forward(&ids);
+        let new_id = special_argmax(&logits);
+        ids.push(new_id as u32);
+        println!("Loop in {:?}", start.elapsed());
     }
+    println!("Result {:?}", tokenizer.decode(ids, false));
     println!("Total Inference {:?}", start.elapsed());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    pub(crate) fn simplify(data: &[f32]) -> Vec<f32> {
+        let precision = 3;
+        let m = 10.0 * 10.0f32.powf(precision as f32);
+        data.iter().map(|x| (x * m).round() / m).collect()
+    }
 }

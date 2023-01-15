@@ -1,1 +1,3 @@
 /target
+model.safetensors
+tokenizer.json
