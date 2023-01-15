@@ -38,7 +38,7 @@ pub fn select<T: Tensor, TM: Tensor + TensorMut>(ids: &[u32], weights: &T, out: 
 }
 
 #[inline]
-pub(crate) fn matmul_t<A: Tensor, B: Tensor, TM: Tensor + TensorMut>(a: &A, b: &B, c: &mut TM) {
+pub fn matmul_t<A: Tensor, B: Tensor, TM: Tensor + TensorMut>(a: &A, b: &B, c: &mut TM) {
     let ap = a.as_ptr();
     let bp = b.as_ptr();
     let cp = c.as_mut_ptr();
@@ -79,7 +79,7 @@ pub(crate) fn matmul_t<A: Tensor, B: Tensor, TM: Tensor + TensorMut>(a: &A, b: &
 }
 
 #[inline]
-pub(crate) fn matmul<A: Tensor, B: Tensor, TM: TensorMut>(a: &A, b: &B, c: &mut TM) {
+pub fn matmul<A: Tensor, B: Tensor, TM: TensorMut>(a: &A, b: &B, c: &mut TM) {
     let ap = a.as_ptr();
     let bp = b.as_ptr();
     let cp = c.as_mut_ptr();
