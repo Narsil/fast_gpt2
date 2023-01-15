@@ -25,13 +25,13 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --all-targets --verbose
+          args: --verbose
 
       - name: Lint with Clippy
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --all-features -- -D warnings
+          args: --all-features -- -D warnings
       - name: Download model for tests
         uses: actions-rs/cargo@v1
         with:

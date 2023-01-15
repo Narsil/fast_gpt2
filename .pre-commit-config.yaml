@@ -9,6 +9,7 @@ repos:
         name: "Rust (clippy)"
         args:
           [
+            "--all-features",
             "--",
             "-Dwarnings",
           ]

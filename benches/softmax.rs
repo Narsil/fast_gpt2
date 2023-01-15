@@ -1,5 +1,6 @@
 #![feature(test)]
 extern crate test;
+
 use fast_gpt2::{
     ops::{add, addmm, causal_softmax, matmul},
     tensor::OwnedTensor,
