@@ -112,7 +112,7 @@ fn main() -> Result<(), BuildError> {
 
     println!("cargo:rerun-if-env-changed=STATIC");
     #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
-    let library = if std::env::var("STATIC").unwrap_or("0".to_string()) == "1" {
+    let library = if std::env::var("STATIC").unwrap_or("1".to_string()) == "1" {
         Library::Static
     } else {
         Library::Dynamic

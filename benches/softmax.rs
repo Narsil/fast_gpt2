@@ -13,8 +13,9 @@ fn bench_softmax(b: &mut Bencher) {
     let hidden_dim = 768;
     let data = vec![0.0; hidden_dim * sequence_length];
     let mut tensor = OwnedTensor::new(data, vec![sequence_length, hidden_dim]);
+    let mut max = vec![0.0; sequence_length];
     b.iter(|| {
-        black_box(causal_softmax(&mut tensor));
+        black_box(causal_softmax(&mut tensor, &mut max));
     });
 }
 
@@ -23,7 +24,6 @@ fn bench_addmm(b: &mut Bencher) {
     let sequence_length = 3;
     let num_heads = 12;
     let hidden_dim = 768;
-    let head_dim = hidden_dim / num_heads;
     let data = vec![0.0; hidden_dim * sequence_length];
     let tensor = OwnedTensor::new(data, vec![sequence_length, hidden_dim]);
     let data = vec![0.0; hidden_dim * hidden_dim * 4];
