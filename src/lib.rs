@@ -1,7 +1,7 @@
 pub mod download;
-mod model;
-mod ops;
-mod tensor;
+pub mod model;
+pub mod ops;
+pub mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
 use crate::ops::special_argmax;

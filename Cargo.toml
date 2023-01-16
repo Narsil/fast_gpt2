@@ -24,3 +24,4 @@ libc = { version = "0.2", default-features = false, optional = true }
 
 [features]
 cblas = ["dep:cblas-sys", "dep:libc"]
+intel-mkl = ["cblas"]
