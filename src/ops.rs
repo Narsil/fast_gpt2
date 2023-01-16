@@ -159,10 +159,11 @@ pub fn mul<T: Tensor, TM: Tensor + TensorMut>(a: &T, b: &mut TM) {
 
 pub fn normalize<TM: Tensor + TensorMut>(x: &mut TM, epsilon: f32) {
     assert_eq!(x.shape().len(), 2);
+    let m = x.shape()[0];
     let size = x.shape()[1];
 
-    let mut mean: Vec<f32> = vec![0.0; x.shape()[0]];
-    let mut var: Vec<f32> = vec![0.0; x.shape()[0]];
+    let mut mean: Vec<f32> = vec![0.0; m];
+    let mut var: Vec<f32> = vec![0.0; m];
     let mut sum = 0.0;
     for (i, v) in x.data().iter().enumerate() {
         sum += v;
@@ -190,14 +191,14 @@ pub fn normalize<TM: Tensor + TensorMut>(x: &mut TM, epsilon: f32) {
 }
 
 #[inline]
-fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM) {
+fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
     let m = x.shape()[x.shape().len() - 2];
     let n = x.shape()[x.shape().len() - 1];
     let mut b = 1;
     for s in &x.shape()[..x.shape().len() - 2] {
         b *= s;
     }
-    let mut max = vec![0.0; m * b];
+    assert!(max.len() >= b * m);
     let mut current_max = f32::NEG_INFINITY;
     for (ii, &v) in x.data().iter().enumerate() {
         let i = ii / n;
@@ -222,7 +223,7 @@ fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM) {
         // TODO Is skipping the causal ops faster ?
         *v = (*v).exp();
     });
-    let mut softmax = vec![0.0; m * b];
+    let softmax = max;
     let mut sum = 0.0;
     for (ii, v) in x.data().iter().enumerate() {
         let i = (ii / n) % m;
@@ -247,11 +248,11 @@ fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM) {
 }
 
 #[cfg(test)]
-pub fn softmax<TM: Tensor + TensorMut>(x: &mut TM) {
-    g_softmax::<false, TM>(x)
+pub fn softmax<TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
+    g_softmax::<false, TM>(x, max)
 }
-pub fn causal_softmax<TM: Tensor + TensorMut>(x: &mut TM) {
-    g_softmax::<true, TM>(x)
+pub fn causal_softmax<TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
+    g_softmax::<true, TM>(x, max)
 }
 
 fn attention_matmul_qk<T: Tensor, TM: Tensor + TensorMut>(qkv: &T, qk: &mut TM) {
@@ -341,6 +342,7 @@ fn attention_matmul_qkv<QK: Tensor, T: Tensor, TM: Tensor + TensorMut>(
 pub fn attention<T: Tensor, TM: Tensor + TensorMut, OUT: Tensor + TensorMut>(
     qkv: &T,
     qk: &mut TM,
+    max: &mut [f32],
     out: &mut OUT,
 ) {
     let sequence_length = qkv.shape()[0];
@@ -354,22 +356,18 @@ pub fn attention<T: Tensor, TM: Tensor + TensorMut, OUT: Tensor + TensorMut>(
     );
     assert_eq!(out.shape(), vec![sequence_length, hidden_dim]);
 
+    // let start = std::time::Instant::now();
     attention_matmul_qk(qkv, qk);
-    // println!("After qk {:?}", &qk.data()[qk.data().len() - 10..]);
-    // Need to do scale_weights
+    // println!("matmul_qk {:?}", start.elapsed());
     let head_dim = hidden_dim / num_heads;
     let scale = (head_dim as f32).sqrt();
     qk.data_mut().iter_mut().for_each(|v| *v /= scale);
-    // println!("After scale {:?}", &qk.data()[qk.data().len() - 10..]);
-    causal_softmax(qk);
-    // println!(
-    //     "After causal_softmax {:?}",
-    //     &qk.data()[qk.data().len() - 10..]
-    // );
+    // println!("scale {:?}", start.elapsed());
+    causal_softmax(qk, max);
+    // println!("softmax {:?}", start.elapsed());
     attention_matmul_qkv(qk, qkv, out);
-    // println!("After values {:?}", out.shape());
-    // println!("After values {:?}", &out.data()[out.data().len() - 10..]);
-    // println!("---------")
+    // println!("matmul qkv {:?}", start.elapsed());
+    // println!("----");
 }
 
 pub fn special_argmax<T: Tensor>(x: &T) -> usize {
@@ -388,12 +386,25 @@ pub fn special_argmax<T: Tensor>(x: &T) -> usize {
     max_id
 }
 
+#[inline]
+pub fn faster_tanh(x: f32) -> f32 {
+    let x2 = x * x;
+    let x3 = x2 * x;
+    let x5 = x3 * x2;
+
+    let a = x + (0.16489087 * x3) + (0.00985468 * x5);
+
+    a / (1.0 + (a * a)).sqrt()
+}
+
 pub fn gelu<T: TensorMut>(x: &mut T) {
     x.data_mut().iter_mut().for_each(|v| {
         *v = 0.5
             * (*v)
             * (1.0
-                + ((2.0f32 / std::f32::consts::PI).sqrt() * (*v + 0.044715 * v.powf(3.0))).tanh())
+                + faster_tanh(
+                    (2.0f32 / std::f32::consts::PI).sqrt() * (*v + 0.044715 * v.powf(3.0)),
+                ))
     });
 }
 
@@ -448,7 +459,8 @@ mod tests {
     #[test]
     fn simple_softmax() {
         let mut a = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
-        softmax(&mut a);
+        let mut max = vec![0.0; 2];
+        softmax(&mut a, &mut max);
         assert_eq!(
             simplify(&a.data[..]),
             // Values obtained through python
@@ -459,7 +471,9 @@ mod tests {
     #[test]
     fn simple_causal_softmax() {
         let mut a = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
-        causal_softmax(&mut a);
+        // Large enough for the second test
+        let mut max = vec![0.0; 3 * 2];
+        causal_softmax(&mut a, &mut max);
         assert_eq!(
             simplify(&a.data[..]),
             // Values obtained through python
@@ -468,7 +482,7 @@ mod tests {
 
         let data: Vec<_> = (0..12).map(|i| (i + 1) as f32).collect();
         let mut a = OwnedTensor::new(data, vec![3, 2, 2]);
-        causal_softmax(&mut a);
+        causal_softmax(&mut a, &mut max);
         assert_eq!(
             simplify(&a.data[..]),
             // Values obtained through python
@@ -615,7 +629,8 @@ mod tests {
             vec![0.0; sequence_length * hidden_dim],
             vec![sequence_length, hidden_dim],
         );
-        attention(&qkv, &mut qk, &mut qv);
+        let mut max = vec![0.0; sequence_length * num_heads];
+        attention(&qkv, &mut qk, &mut max, &mut qv);
         assert_eq!(
             // Values gotten from Python
             // ```python

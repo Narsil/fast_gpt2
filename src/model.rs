@@ -79,13 +79,9 @@ impl<'a> Attention<'a> {
             vec![0.0; sequence_length * hidden_dim],
             vec![sequence_length, hidden_dim],
         );
-        attention(qkv, &mut qk, &mut qv);
-        // println!("Before proj {:?}", qv.shape());
-        // println!("Before proj {:?}", &qv.data()[qv.data().len() - 10..]);
+        let mut max = vec![0.0; sequence_length * num_heads];
+        attention(qkv, &mut qk, &mut max, &mut qv);
         self.c_proj.forward(&mut qv);
-        // println!("After proj {:?}", qv.shape());
-        // println!("After proj {:?}", &qv.data()[qv.data().len() - 10..]);
-        // println!("====");
         *qkv = qv;
     }
 }
@@ -504,9 +500,9 @@ mod tests {
         let bias = ViewTensor::new(&data, vec![hidden_dim]);
         let c_proj = Linear::new(weight, bias);
 
-        let attention = Mlp { c_fc, c_proj };
+        let mlp = Mlp { c_fc, c_proj };
         let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![1, hidden_dim]);
-        attention.forward(&mut input);
+        mlp.forward(&mut input);
         #[allow(clippy::excessive_precision)]
         {
             assert_eq!(
