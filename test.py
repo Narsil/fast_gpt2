@@ -2,7 +2,7 @@ import datetime
 from transformers import pipeline
 
 start = datetime.datetime.now()
-pipe = pipeline(task="text-generation", model="gpt2", do_sample=False, use_cache=False)
+pipe = pipeline(task="text-generation", model="gpt2", do_sample=False)
 pipe.model.config.max_length = None
 print(f"Loaded in {datetime.datetime.now() - start}")
 inf_start = datetime.datetime.now()

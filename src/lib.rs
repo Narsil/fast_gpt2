@@ -56,17 +56,21 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let tokenizer = Tokenizer::from_file(filename).unwrap();
     println!("Tokenizer {:?}", start.elapsed());
 
-    let gpt2 = Gpt2::from_tensors(&tensors);
+    let num_heads = 12;
+    let gpt2 = Gpt2::from_tensors(&tensors, num_heads);
     let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
     let mut ids = encoded.get_ids().to_vec();
+    let mut past_key_values = gpt2.create_past_key_values(num_heads);
+    let mut current_ids = ids.clone();
     for _i in 0..10 {
         let start = std::time::Instant::now();
-        let logits = gpt2.forward(&ids);
+        let logits = gpt2.forward(&current_ids, &mut past_key_values);
         let new_id = special_argmax(&logits);
         ids.push(new_id as u32);
+        current_ids = vec![new_id as u32];
         println!("Loop in {:?}", start.elapsed());
     }
     println!("Result {:?}", tokenizer.decode(ids, false));

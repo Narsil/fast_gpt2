@@ -1,5 +1,5 @@
 use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select};
-use crate::tensor::{OwnedTensor, Tensor, ViewTensor};
+use crate::tensor::{OwnedTensor, PastKeyValue, PastKeyValues, Tensor, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
 pub struct Mlp<'a> {
@@ -64,23 +64,30 @@ impl<'a> Attention<'a> {
         }
     }
 
-    pub fn forward(&self, hidden_states: &mut OwnedTensor) {
+    pub fn forward(&self, hidden_states: &mut OwnedTensor, past: &mut PastKeyValue) {
         assert_eq!(hidden_states.shape().len(), 2);
         let sequence_length = hidden_states.shape()[0];
         let hidden_dim = hidden_states.shape()[1];
         self.c_attn.forward(hidden_states);
         let qkv = hidden_states;
         let num_heads = self.num_heads;
+        assert_eq!(hidden_dim % num_heads, 0);
+        let head_dim = hidden_dim / num_heads;
+        let past_sequence_length = past.key.shape()[1];
         let mut qk = OwnedTensor::new(
-            vec![0.0; num_heads * sequence_length * sequence_length],
-            vec![num_heads, sequence_length, sequence_length],
+            vec![0.0; num_heads * sequence_length * (past_sequence_length + sequence_length)],
+            vec![
+                num_heads,
+                sequence_length,
+                past_sequence_length + sequence_length,
+            ],
         );
         let mut qv = OwnedTensor::new(
             vec![0.0; sequence_length * hidden_dim],
-            vec![sequence_length, hidden_dim],
+            vec![num_heads, sequence_length, head_dim],
         );
-        let mut max = vec![0.0; sequence_length * num_heads];
-        attention(qkv, &mut qk, &mut max, &mut qv);
+        let mut max = vec![0.0; (past_sequence_length + sequence_length) * num_heads];
+        attention(qkv, &mut qk, &mut max, past, &mut qv);
         self.c_proj.forward(&mut qv);
         *qkv = qv;
     }
@@ -94,7 +101,7 @@ pub struct Gpt2Layer<'a> {
 }
 
 impl<'a> Gpt2Layer<'a> {
-    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>) -> Self {
+    fn from_tensors(index: usize, tensors: &'a SafeTensors<'a>, num_heads: usize) -> Self {
         let ln_1 = LayerNorm::from(
             tensors.tensor(&format!("h.{index}.ln_1.weight")).unwrap(),
             tensors.tensor(&format!("h.{index}.ln_1.bias")).unwrap(),
@@ -104,7 +111,7 @@ impl<'a> Gpt2Layer<'a> {
             tensors.tensor(&format!("h.{index}.ln_2.bias")).unwrap(),
         );
         let mlp = Mlp::from_tensors(index, tensors);
-        let attention = Attention::from_tensors(index, tensors, 12);
+        let attention = Attention::from_tensors(index, tensors, num_heads);
         Self {
             ln_1,
             ln_2,
@@ -113,12 +120,12 @@ impl<'a> Gpt2Layer<'a> {
         }
     }
 
-    fn forward(&self, tensor: &mut OwnedTensor) {
+    fn forward(&self, tensor: &mut OwnedTensor, past_key_value: &mut PastKeyValue) {
         // println!("In {:?}", &tensor.data()[tensor.data().len() - 10..]);
         let residual = tensor.clone();
         self.ln_1.forward(tensor);
         // println!("After ln1 {:?}", &tensor.data()[tensor.data().len() - 10..]);
-        self.attention.forward(tensor);
+        self.attention.forward(tensor, past_key_value);
         // println!(
         //     "After attention {:?}",
         //     &tensor.data()[tensor.data().len() - 10..]
@@ -150,16 +157,16 @@ pub struct Gpt2Model<'a> {
 }
 
 impl<'a> Gpt2Model<'a> {
-    fn from_tensors(tensors: &'a SafeTensors<'a>) -> Self {
+    fn from_tensors(tensors: &'a SafeTensors<'a>, num_heads: usize) -> Self {
         let layers: Vec<_> = (0..12)
-            .map(|i| Gpt2Layer::from_tensors(i, tensors))
+            .map(|i| Gpt2Layer::from_tensors(i, tensors, num_heads))
             .collect();
         Self { layers }
     }
 
-    fn forward(&self, tensor: &mut OwnedTensor) {
-        for layer in &self.layers {
-            layer.forward(tensor);
+    fn forward(&self, tensor: &mut OwnedTensor, past_key_values: &mut PastKeyValues) {
+        for (layer, past_key_value) in self.layers.iter().zip(past_key_values.iter_mut()) {
+            layer.forward(tensor, past_key_value);
         }
     }
 }
@@ -265,7 +272,10 @@ impl<'a> LayerNorm<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor) {
-        normalize(tensor, self.epsilon);
+        let m = tensor.shape()[0];
+        let mut mean = vec![0.0; m];
+        let mut var = vec![0.0; m];
+        normalize(tensor, &mut mean, &mut var, self.epsilon);
         mul(&self.weight, tensor);
         add(&self.bias, tensor);
     }
@@ -280,10 +290,10 @@ pub struct Gpt2<'a> {
 }
 
 impl<'a> Gpt2<'a> {
-    pub fn from_tensors(tensors: &'a SafeTensors<'a>) -> Self {
+    pub fn from_tensors(tensors: &'a SafeTensors<'a>, num_heads: usize) -> Self {
         let wte = Embedding::from(tensors.tensor("wte.weight").unwrap());
         let wpe = Embedding::from(tensors.tensor("wpe.weight").unwrap());
-        let h = Gpt2Model::from_tensors(tensors);
+        let h = Gpt2Model::from_tensors(tensors, num_heads);
         let ln_f = LayerNorm::from(
             tensors.tensor("ln_f.weight").unwrap(),
             tensors.tensor("ln_f.bias").unwrap(),
@@ -300,12 +310,26 @@ impl<'a> Gpt2<'a> {
 }
 
 impl<'a> Gpt2<'a> {
-    pub fn forward(&self, ids: &[u32]) -> OwnedTensor {
+    pub fn create_past_key_values(&self, num_heads: usize) -> PastKeyValues {
+        let num_layers = self.h.layers.len();
+        let hidden_dim = self.wte.weight.shape()[1];
+        assert_eq!(hidden_dim % num_heads, 0);
+        let head_dim = hidden_dim / num_heads;
+        (0..num_layers)
+            .map(|_| {
+                let key = OwnedTensor::new(vec![0.0], vec![num_heads, 0, head_dim]);
+                let value = OwnedTensor::new(vec![0.0], vec![num_heads, 0, head_dim]);
+                PastKeyValue { key, value }
+            })
+            .collect()
+    }
+
+    pub fn forward(&self, ids: &[u32], past_key_values: &mut PastKeyValues) -> OwnedTensor {
         let mut tensor = self.wte.forward(ids);
         let positions: Vec<_> = (0..ids.len() as u32).collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
         add(&position_embeddings, &mut tensor);
-        self.h.forward(&mut tensor);
+        self.h.forward(&mut tensor, past_key_values);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
         tensor

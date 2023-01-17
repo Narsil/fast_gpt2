@@ -1,4 +1,4 @@
-use crate::tensor::{Tensor, TensorMut};
+use crate::tensor::{PastKeyValue, Tensor, TensorMut};
 
 #[cfg(feature = "cblas")]
 use cblas_sys::{
@@ -7,12 +7,7 @@ use cblas_sys::{
 };
 
 #[inline]
-pub fn addmm<X: Tensor, A: Tensor, B: Tensor, TM: Tensor + TensorMut>(
-    x: &X,
-    a: &A,
-    b: &B,
-    out: &mut TM,
-) {
+pub fn addmm<X: Tensor, A: Tensor, B: Tensor, TM: TensorMut>(x: &X, a: &A, b: &B, out: &mut TM) {
     let m = x.shape()[0];
     let k = x.shape()[1];
     let n = a.shape()[1];
@@ -24,7 +19,7 @@ pub fn addmm<X: Tensor, A: Tensor, B: Tensor, TM: Tensor + TensorMut>(
     add(b, out);
 }
 
-pub fn select<T: Tensor, TM: Tensor + TensorMut>(ids: &[u32], weights: &T, out: &mut TM) {
+pub fn select<T: Tensor, TM: TensorMut>(ids: &[u32], weights: &T, out: &mut TM) {
     let hidden_dim = weights.shape()[1];
     let sequence_length = ids.len();
     assert_eq!(out.shape(), [sequence_length, hidden_dim]);
@@ -37,89 +32,86 @@ pub fn select<T: Tensor, TM: Tensor + TensorMut>(ids: &[u32], weights: &T, out: 
     }
 }
 
-#[inline]
-pub fn matmul_t<A: Tensor, B: Tensor, TM: Tensor + TensorMut>(a: &A, b: &B, c: &mut TM) {
-    let ap = a.as_ptr();
-    let bp = b.as_ptr();
-    let cp = c.as_mut_ptr();
-
-    let m = a.shape()[0];
-    let k = a.shape()[1];
-    let n = b.shape()[0];
-
-    assert_eq!(k, b.shape()[1]);
-
-    let ar = k as isize;
-    let ac = 1;
-    let br = 1;
-    let bc = b.shape()[1] as isize;
-    let cr = n as isize;
-    let cc = 1;
-    #[cfg(not(feature = "cblas"))]
-    unsafe {
-        matrixmultiply::sgemm(m, k, n, 1.0, ap, ar, ac, bp, br, bc, 1.0, cp, cr, cc);
-    }
-
-    #[cfg(feature = "cblas")]
-    unsafe {
-        let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
-        let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
-            let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
-            let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
-            (ColMajor, a_tr, b_tr, lda, ldb, m)
-        } else {
-            let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
-            let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
-            (RowMajor, a_tr, b_tr, lda, ldb, n)
-        };
-        sgemm(
-            layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
-        )
-    }
-}
-
-#[inline]
 pub fn matmul<A: Tensor, B: Tensor, TM: TensorMut>(a: &A, b: &B, c: &mut TM) {
-    let ap = a.as_ptr();
-    let bp = b.as_ptr();
-    let cp = c.as_mut_ptr();
+    g_matmul::<false, A, B, TM>(a, b, c)
+}
 
-    let m = a.shape()[0];
-    let k = a.shape()[1];
-    let n = b.shape()[1];
+pub fn matmul_t<A: Tensor, B: Tensor, TM: TensorMut>(a: &A, b: &B, c: &mut TM) {
+    g_matmul::<true, A, B, TM>(a, b, c)
+}
 
-    assert_eq!(k, b.shape()[0]);
+#[inline]
+pub fn g_matmul<const TRANSPOSE: bool, A: Tensor, B: Tensor, TM: TensorMut>(
+    a: &A,
+    b: &B,
+    c: &mut TM,
+) {
+    let dim = a.shape().len();
+    assert!(dim >= 2);
+    assert_eq!(b.shape().len(), dim);
+    assert_eq!(c.shape().len(), dim);
+    assert_eq!(a.shape()[..dim - 2], b.shape()[..dim - 2]);
+    assert_eq!(a.shape()[..dim - 2], c.shape()[..dim - 2]);
+
+    let m = a.shape()[dim - 2];
+    let k = a.shape()[dim - 1];
+
+    let n = if TRANSPOSE {
+        let n = b.shape()[dim - 2];
+        assert_eq!(k, b.shape()[dim - 1]);
+        n
+    } else {
+        let n = b.shape()[dim - 1];
+        assert_eq!(k, b.shape()[dim - 2]);
+        n
+    };
+    assert_eq!(c.shape()[dim - 2..], vec![m, n]);
+
+    let batching: usize = a.shape()[..dim - 2].iter().product();
+    let a_skip: usize = m * k;
+    let b_skip: usize = n * k;
+    let c_skip: usize = m * n;
 
     let ar = k as isize;
     let ac = 1;
-    let br = n as isize;
-    let bc = 1;
+    let (br, bc) = if TRANSPOSE {
+        (1, b.shape()[1] as isize)
+    } else {
+        (b.shape()[1] as isize, 1)
+    };
     let cr = n as isize;
     let cc = 1;
-    #[cfg(not(feature = "cblas"))]
-    unsafe {
-        matrixmultiply::sgemm(m, k, n, 1.0, ap, ar, ac, bp, br, bc, 1.0, cp, cr, cc);
-    }
 
-    #[cfg(feature = "cblas")]
-    unsafe {
-        let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
-        let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
-            let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
-            let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
-            (ColMajor, a_tr, b_tr, lda, ldb, m)
-        } else {
-            let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
-            let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
-            (RowMajor, a_tr, b_tr, lda, ldb, n)
-        };
-        sgemm(
-            layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
-        )
-    }
+    (0..batching).for_each(|step| {
+        let ap = a.data()[step * a_skip..].as_ptr();
+        let bp = b.data()[step * b_skip..].as_ptr();
+        let cp = c.data_mut()[step * c_skip..].as_mut_ptr();
+
+        #[cfg(not(feature = "cblas"))]
+        unsafe {
+            matrixmultiply::sgemm(m, k, n, 1.0, ap, ar, ac, bp, br, bc, 1.0, cp, cr, cc);
+        }
+
+        #[cfg(feature = "cblas")]
+        unsafe {
+            let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
+            let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
+                let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
+                let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
+                (ColMajor, a_tr, b_tr, lda, ldb, m)
+            } else {
+                let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
+                let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
+                (RowMajor, a_tr, b_tr, lda, ldb, n)
+            };
+            sgemm(
+                layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
+            )
+        }
+    });
 }
 
-pub fn add<T: Tensor, TM: Tensor + TensorMut>(a: &T, b: &mut TM) {
+pub fn add<T: Tensor, TM: TensorMut>(a: &T, b: &mut TM) {
     if a.shape() == b.shape() {
         a.data()
             .iter()
@@ -138,7 +130,7 @@ pub fn add<T: Tensor, TM: Tensor + TensorMut>(a: &T, b: &mut TM) {
     }
 }
 
-pub fn mul<T: Tensor, TM: Tensor + TensorMut>(a: &T, b: &mut TM) {
+pub fn mul<T: Tensor, TM: TensorMut>(a: &T, b: &mut TM) {
     if a.shape() == b.shape() {
         a.data()
             .iter()
@@ -157,13 +149,13 @@ pub fn mul<T: Tensor, TM: Tensor + TensorMut>(a: &T, b: &mut TM) {
     }
 }
 
-pub fn normalize<TM: Tensor + TensorMut>(x: &mut TM, epsilon: f32) {
+pub fn normalize<TM: TensorMut>(x: &mut TM, mean: &mut [f32], var: &mut [f32], epsilon: f32) {
     assert_eq!(x.shape().len(), 2);
     let m = x.shape()[0];
     let size = x.shape()[1];
+    assert!(mean.len() >= m);
+    assert!(var.len() >= m);
 
-    let mut mean: Vec<f32> = vec![0.0; m];
-    let mut var: Vec<f32> = vec![0.0; m];
     let mut sum = 0.0;
     for (i, v) in x.data().iter().enumerate() {
         sum += v;
@@ -191,7 +183,7 @@ pub fn normalize<TM: Tensor + TensorMut>(x: &mut TM, epsilon: f32) {
 }
 
 #[inline]
-fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
+fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     let m = x.shape()[x.shape().len() - 2];
     let n = x.shape()[x.shape().len() - 1];
     let mut b = 1;
@@ -248,116 +240,66 @@ fn g_softmax<const CAUSAL: bool, TM: Tensor + TensorMut>(x: &mut TM, max: &mut [
 }
 
 #[cfg(test)]
-pub fn softmax<TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
+pub fn softmax<TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     g_softmax::<false, TM>(x, max)
 }
-pub fn causal_softmax<TM: Tensor + TensorMut>(x: &mut TM, max: &mut [f32]) {
+pub fn causal_softmax<TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     g_softmax::<true, TM>(x, max)
 }
 
-fn attention_matmul_qk<T: Tensor, TM: Tensor + TensorMut>(qkv: &T, qk: &mut TM) {
-    // qkv = [S, 3H]
-    // qk = [NH, S, S]
-    // q = qkv[:, :H], k = qkv[:, H: 2H], v = qkv[:, 2H: 3H]
-    //
-    // --HEADS--
-    // q[S, H] -> q[S, NH, HH] -> q[NH, S, HH]
-    // k[S, H] -> k[S, NH, HH] -> k[NH, S, HH]
-    // qk[i, j, k] = sum(q[i, j, l] * k[i, k, l]) over l
-    let num_heads = qk.shape()[0];
-    let sequence_length = qk.shape()[1];
-    let hidden_dim3 = qkv.shape()[1];
-    assert_eq!(qk.shape()[2], sequence_length);
-    assert_eq!(qkv.shape()[0], sequence_length);
-    assert_eq!(hidden_dim3 % 3, 0);
-    let hidden_dim = hidden_dim3 / 3;
-    assert_eq!(hidden_dim % num_heads, 0);
-    let head_dim = hidden_dim / num_heads;
-
-    (0..num_heads).for_each(|i| {
-        (0..sequence_length).for_each(|j| {
-            (0..sequence_length).for_each(|k| {
-                let index = i * sequence_length * sequence_length + j * sequence_length + k;
-                let sum = (0..head_dim)
-                    .map(|l| {
-                        let index_q = j * hidden_dim3 + i * head_dim + l;
-                        let index_k = k * hidden_dim3 + i * head_dim + l + hidden_dim;
-                        let q = qkv.data()[index_q];
-                        let k = qkv.data()[index_k];
-                        q * k
-                    })
-                    .sum();
-                qk.data_mut()[index] = sum;
-            });
-        });
-    });
-}
-
-fn attention_matmul_qkv<QK: Tensor, T: Tensor, TM: Tensor + TensorMut>(
-    qk: &QK,
-    qkv: &T,
-    out: &mut TM,
-) {
-    // qkv = [S, 3H]
-    // v = qkv[S, 2H: 3H]
-    // out = [S, H]
-    //
-    // --HEADS--
-    // v[S, H] -> v[S, NH, HH] -> v[NH, S, HH]
-    // out = [S, H]
-    // qk = [NH, S, S]
-    // v[NH, S, HH]
-    // out[i, j, k] = sum(qk[i, j, l] * v[i, l, k]) over l
-    let num_heads = qk.shape()[0];
-    let sequence_length = qk.shape()[1];
-    let hidden_dim = out.shape()[1];
-    assert_eq!(qk.shape()[2], sequence_length);
-    assert_eq!(out.shape()[0], sequence_length);
-    assert_eq!(hidden_dim % num_heads, 0);
-    let head_dim = hidden_dim / num_heads;
-    assert_eq!(qkv.shape(), vec![sequence_length, hidden_dim * 3]);
-    (0..num_heads).for_each(|head_index| {
-        (0..sequence_length).for_each(|lseq_index| {
-            (0..head_dim).for_each(|hh| {
-                let index = lseq_index * hidden_dim + head_index * head_dim + hh;
-                // println!("Index {index:?}");
-                out.data_mut()[index] = (0..sequence_length)
-                    .map(|l| {
-                        let index_qk = head_index * sequence_length * sequence_length
-                            + lseq_index * sequence_length
-                            + l;
-                        let index_v =
-                            l * hidden_dim * 3 + head_index * head_dim + hh + hidden_dim * 2;
-                        let qk = qk.data()[index_qk];
-                        let value = qkv.data()[index_v];
-                        // println!("Value {value:?}");
-                        qk * value
-                    })
-                    .sum();
-            });
-        })
-    });
-}
-
-pub fn attention<T: Tensor, TM: Tensor + TensorMut, OUT: Tensor + TensorMut>(
+pub fn attention<T: Tensor, TM: TensorMut, OUT: TensorMut>(
     qkv: &T,
     qk: &mut TM,
     max: &mut [f32],
+    past: &mut PastKeyValue,
     out: &mut OUT,
 ) {
+    //  let start = std::time::Instant::now();
     let sequence_length = qkv.shape()[0];
+    let past_sequence_length = past.key.shape()[1];
     let hidden_dim3 = qkv.shape()[1];
     assert_eq!(hidden_dim3 % 3, 0);
     let hidden_dim = hidden_dim3 / 3;
     let num_heads = qk.shape()[0];
+    assert_eq!(hidden_dim % num_heads, 0);
+    let head_dim = hidden_dim / num_heads;
+
     assert_eq!(
         qk.shape(),
-        vec![num_heads, sequence_length, sequence_length]
+        vec![
+            num_heads,
+            sequence_length,
+            (past_sequence_length + sequence_length)
+        ]
     );
-    assert_eq!(out.shape(), vec![sequence_length, hidden_dim]);
+    // assert_eq!(out.shape(), vec![sequence_length, hidden_dim]);
+    assert_eq!(
+        past.key.shape(),
+        vec![num_heads, past_sequence_length, head_dim]
+    );
+    assert_eq!(
+        past.value.shape(),
+        vec![num_heads, past_sequence_length, head_dim]
+    );
 
-    // let start = std::time::Instant::now();
-    attention_matmul_qk(qkv, qk);
+    use crate::tensor::OwnedTensor;
+
+    let query = OwnedTensor::zeros(vec![num_heads, sequence_length, head_dim]);
+    let key = OwnedTensor::zeros(vec![
+        num_heads,
+        (past_sequence_length + sequence_length),
+        head_dim,
+    ]);
+    let value = OwnedTensor::zeros(vec![
+        num_heads,
+        (past_sequence_length + sequence_length),
+        head_dim,
+    ]);
+    // println!("Query {:?}", query.shape());
+    // println!("Key {:?}", key.shape());
+    // println!("QK {:?}", qk.shape());
+    matmul_t(&query, &key, qk);
+    // attention_matmul_qk(qkv, &past.key, qk);
     // println!("matmul_qk {:?}", start.elapsed());
     let head_dim = hidden_dim / num_heads;
     let scale = (head_dim as f32).sqrt();
@@ -365,9 +307,17 @@ pub fn attention<T: Tensor, TM: Tensor + TensorMut, OUT: Tensor + TensorMut>(
     // println!("scale {:?}", start.elapsed());
     causal_softmax(qk, max);
     // println!("softmax {:?}", start.elapsed());
-    attention_matmul_qkv(qk, qkv, out);
+    // println!("QK {:?}", qk.shape());
+    // println!("Value {:?}", value.shape());
+    // println!("out {:?}", out.shape());
+    matmul(qk, &value, out);
     // println!("matmul qkv {:?}", start.elapsed());
     // println!("----");
+    // println!("Attention {:?}", start.elapsed());
+    // TODO repermute out
+    *past = PastKeyValue { key, value };
+    let new_out = OUT::zeros(vec![(past_sequence_length + sequence_length), hidden_dim]);
+    *out = new_out;
 }
 
 pub fn special_argmax<T: Tensor>(x: &T) -> usize {
