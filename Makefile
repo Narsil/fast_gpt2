@@ -1,3 +1,4 @@
+.PHONY: docker
 purge_disk:
 	sync # (move data, modified through FS -> HDD cache) + flush HDD cache
 	echo 3 > sudo /proc/sys/vm/drop_caches # (slab + pagecache) -> HDD (https://www.kernel.org/doc/Documentation/sysctl/vm.txt)
@@ -5,5 +6,5 @@ purge_disk:
 	sudo hdparm -F /dev/sda
 
 docker:
-	docker build -f docker/Dockerfile .
+	docker build -f docker/Dockerfile . -t fast_gpt2
 

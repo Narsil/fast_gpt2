@@ -124,7 +124,7 @@ fn main() -> Result<(), BuildError> {
         "dylib"
     };
 
-    #[cfg(feature = "cblas")]
+    #[cfg(all(feature = "cblas", not(feature = "intel-mkl")))]
     println!("cargo:rustc-link-lib=dylib=cblas");
 
     #[cfg(feature = "intel-mkl")]

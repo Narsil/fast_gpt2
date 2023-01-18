@@ -6,9 +6,8 @@ RUN cd /tmp && \
     echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
     | tee /etc/apt/sources.list.d/oneAPI.list && \
     apt update && \
-    apt install -y intel-oneapi-openmp \
-                   intel-oneapi-mkl
-RUN apt install libatlas-base-dev -y
+    apt install -y intel-oneapi-openmp-2022.1.0 \
+                   intel-oneapi-mkl-2022.1.0
 
 SHELL ["/bin/bash", "-c"]
 
@@ -16,31 +15,21 @@ WORKDIR /usr/src/fast_gpt2
 COPY docker/dummy.rs .
 COPY Cargo.toml .
 COPY Cargo.lock .
-ENV MKL_VERSION=2023.0.0
 RUN sed -i 's#src/main.rs#dummy.rs#' Cargo.toml
 RUN source /opt/intel/oneapi/setvars.sh && cargo build --release --features intel-mkl
 RUN sed -i 's#dummy.rs#src/main.rs#' Cargo.toml
 COPY . .
 
-# Intel OMP specific variables
-ARG OMP_NUM_THREADS=8
-ENV OMP_NUM_THREADS ${OMP_NUM_THREADS}
-
-ARG KMP_BLOCKTIME=1s
-ENV KMP_BLOCKTIME ${KMP_BLOCKTIME}
-
-# Use 1 socket, num threads defined for // sections as number of cores with one thread per core
-ARG KMP_HW_SUBSET=1s,${OMP_NUM_THREADS}c,1t
-ENV KMP_HW_SUBSET ${KMP_HW_SUBSET}
-
 RUN source /opt/intel/oneapi/setvars.sh && cargo build --release --features intel-mkl
-RUN ldd /usr/src/fast_gpt2/target/release/fast_gpt2 && xx
 
 FROM gcr.io/distroless/cc-debian10
 
 COPY --from=build /usr/src/fast_gpt2/target/release/fast_gpt2 /usr/local/bin/fast_gpt2
-COPY --from=build /usr/lib/x86_64-linux-gnu/libcblas.so.3 /usr/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libatlas.so.3 /usr/lib/
+COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_lp64.so.2 /usr/lib/
+COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.so.2 /usr/lib/
+COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/lib/
+COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/lib/
+COPY --from=build /opt/intel/oneapi/compiler/2022.1.0/linux/compiler/lib/intel64_lin/libiomp5.so /usr/lib/
 COPY tokenizer.json .
 COPY model.safetensors .
 CMD ["fast_gpt2"]
