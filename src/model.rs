@@ -339,7 +339,7 @@ impl<'a> Gpt2<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tensor::{OwnedTensor, ViewTensor};
+    use crate::tensor::{OwnedTensor, TensorMut, ViewTensor};
     use crate::tests::simplify;
     use memmap2::MmapOptions;
 
@@ -458,6 +458,7 @@ mod tests {
 
         let hidden_dim = 8;
         let num_heads = 2;
+        let head_dim = hidden_dim / num_heads;
         let data = (0..hidden_dim * hidden_dim * 3)
             .map(|i| i as f32)
             .collect::<Vec<_>>();
@@ -479,8 +480,13 @@ mod tests {
             c_proj,
             num_heads,
         };
-        let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![1, hidden_dim]);
-        attention.forward(&mut input);
+        let sequence_length = 1;
+        let mut input = OwnedTensor::new(vec![1.0; hidden_dim], vec![sequence_length, hidden_dim]);
+
+        let key = OwnedTensor::zeros(vec![num_heads, 0, head_dim]);
+        let value = OwnedTensor::zeros(vec![num_heads, 0, head_dim]);
+        let mut past = PastKeyValue { key, value };
+        attention.forward(&mut input, &mut past);
         #[allow(clippy::excessive_precision)]
         {
             assert_eq!(
