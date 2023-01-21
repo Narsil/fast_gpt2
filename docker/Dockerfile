@@ -18,8 +18,11 @@ COPY Cargo.lock .
 RUN sed -i 's#src/main.rs#dummy.rs#' Cargo.toml
 RUN source /opt/intel/oneapi/setvars.sh && cargo build --release --features intel-mkl
 RUN sed -i 's#dummy.rs#src/main.rs#' Cargo.toml
-COPY . .
+COPY src/ src/
+COPY . . 
 
+ARG ANACONDA_ROOT
+ENV ANACONDA_ROOT=${ANACONDA_ROOT}
 RUN source /opt/intel/oneapi/setvars.sh && cargo build --release --features intel-mkl
 
 FROM gcr.io/distroless/cc-debian10
@@ -30,8 +33,8 @@ COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.s
 COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/lib/
 COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/lib/
 COPY --from=build /opt/intel/oneapi/compiler/2022.1.0/linux/compiler/lib/intel64_lin/libiomp5.so /usr/lib/
-COPY tokenizer.json .
-COPY model.safetensors .
+# COPY tokenizer.json .
+# COPY model.safetensors .
 CMD ["fast_gpt2"]
 
 

@@ -123,6 +123,9 @@ fn main() -> Result<(), BuildError> {
     } else {
         "dylib"
     };
+    println!("cargo:rerun-if-env-changed=ANACONDA_ROOT");
+    #[cfg(feature = "intel-mkl")]
+    let anaconda = std::env::var("ANACONDA_ROOT").unwrap_or("".to_string());
 
     #[cfg(all(feature = "cblas", not(feature = "intel-mkl")))]
     println!("cargo:rustc-link-lib=dylib=cblas");
@@ -144,7 +147,7 @@ fn main() -> Result<(), BuildError> {
             }
         };
 
-        if library == Library::Dynamic {
+        if anaconda.is_empty() && library == Library::Dynamic {
             // check to make sure that things in `SHARED_LIB_DIRS` are in `$LD_DIR`.
             let path = path.replace('\\', "/");
             for shared_lib_dir in SHARED_LIB_DIRS {
@@ -165,18 +168,22 @@ fn main() -> Result<(), BuildError> {
             }
         }
 
-        let root: std::path::PathBuf = root.into();
+        if !anaconda.is_empty() {
+            println!("cargo:rustc-link-search={}", anaconda);
+        } else {
+            let root: std::path::PathBuf = root.into();
 
-        if !root.exists() {
-            return Err(BuildError::OneAPINotFound(root));
-        }
-        if !root.is_dir() {
-            return Err(BuildError::OneAPINotADir(root));
-        }
+            if !root.exists() {
+                return Err(BuildError::OneAPINotFound(root));
+            }
+            if !root.is_dir() {
+                return Err(BuildError::OneAPINotADir(root));
+            }
 
-        for rel_lib_dir in LINK_DIRS {
-            let lib_dir = root.join(rel_lib_dir);
-            println!("cargo:rustc-link-search={}", lib_dir.display());
+            for rel_lib_dir in LINK_DIRS {
+                let lib_dir = root.join(rel_lib_dir);
+                println!("cargo:rustc-link-search={}", lib_dir.display());
+            }
         }
 
         let lib_postfix: &str = if cfg!(windows) && library == Library::Static {
