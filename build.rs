@@ -112,7 +112,7 @@ fn main() -> Result<(), BuildError> {
 
     println!("cargo:rerun-if-env-changed=STATIC");
     #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
-    let library = if std::env::var("STATIC").unwrap_or("1".to_string()) == "1" {
+    let library = if std::env::var("STATIC").unwrap_or_else(|_| "0".to_string()) == "1" {
         Library::Static
     } else {
         Library::Dynamic
@@ -152,7 +152,8 @@ fn main() -> Result<(), BuildError> {
             let path = path.replace('\\', "/");
             for shared_lib_dir in SHARED_LIB_DIRS {
                 println!("cargo:rerun-if-env-changed=MKL_VERSION");
-                let mkl_version = std::env::var("MKL_VERSION").unwrap_or("2022.1.0".to_string());
+                let mkl_version =
+                    std::env::var("MKL_VERSION").unwrap_or_else(|_| "2022.1.0".to_string());
                 let versioned_dir = shared_lib_dir.replace("latest", &mkl_version);
 
                 println!("Checking that '{shared_lib_dir}' or '{versioned_dir}' is in {LD_DIR}");

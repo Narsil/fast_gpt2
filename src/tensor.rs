@@ -5,6 +5,14 @@ pub struct PastKeyValue {
     pub value: OwnedTensor,
 }
 
+impl PastKeyValue {
+    pub fn new(num_heads: usize, past_sequence_length: usize, head_dim: usize) -> Self {
+        let key = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        let value = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        Self { key, value }
+    }
+}
+
 pub type PastKeyValues = Vec<PastKeyValue>;
 
 pub trait Tensor {
@@ -24,8 +32,8 @@ pub trait TensorMut: Tensor {
 }
 
 pub struct ViewTensor<'data> {
-    pub(crate) shape: Vec<usize>,
-    pub(crate) data: &'data [f32],
+    pub shape: Vec<usize>,
+    pub data: &'data [f32],
 }
 
 impl<'data> Tensor for ViewTensor<'data> {
@@ -40,6 +48,7 @@ impl<'data> Tensor for ViewTensor<'data> {
 
 impl<'data> ViewTensor<'data> {
     pub fn new(data: &'data [f32], shape: Vec<usize>) -> Self {
+        assert_eq!(data.len(), shape.iter().product::<usize>());
         Self { shape, data }
     }
 }
@@ -69,8 +78,8 @@ impl<'data> From<TensorView<'data>> for ViewTensor<'data> {
 
 #[derive(Debug, Clone)]
 pub struct OwnedTensor {
-    pub(crate) shape: Vec<usize>,
-    pub(crate) data: Vec<f32>,
+    pub shape: Vec<usize>,
+    pub data: Vec<f32>,
 }
 
 impl Tensor for OwnedTensor {
@@ -99,6 +108,7 @@ impl TensorMut for OwnedTensor {
 }
 impl OwnedTensor {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Self {
+        assert_eq!(data.len(), shape.iter().product::<usize>());
         Self { shape, data }
     }
 }

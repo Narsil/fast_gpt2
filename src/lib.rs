@@ -63,7 +63,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
     let mut ids = encoded.get_ids().to_vec();
-    let mut past_key_values = gpt2.create_past_key_values(num_heads);
+    let mut past_key_values = gpt2.empty_past_key_values();
     let mut current_ids = ids.clone();
     for _i in 0..10 {
         let start = std::time::Instant::now();
