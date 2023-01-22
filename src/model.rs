@@ -2,6 +2,7 @@ use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select};
 use crate::tensor::{OwnedTensor, PastKeyValue, PastKeyValues, Tensor, TensorMut, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
+#[derive(Clone)]
 pub struct Mlp<'a> {
     c_fc: Linear<'a>,
     c_proj: Linear<'a>,
@@ -33,6 +34,7 @@ impl<'a> Mlp<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Attention<'a> {
     c_attn: Linear<'a>,
     c_proj: Linear<'a>,
@@ -87,6 +89,7 @@ impl<'a> Attention<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Gpt2Layer<'a> {
     ln_1: LayerNorm<'a>,
     ln_2: LayerNorm<'a>,
@@ -127,6 +130,7 @@ impl<'a> Gpt2Layer<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Gpt2Model<'a> {
     layers: Vec<Gpt2Layer<'a>>,
 }
@@ -146,6 +150,7 @@ impl<'a> Gpt2Model<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Linear<'a> {
     weight: ViewTensor<'a>,
     bias: ViewTensor<'a>,
@@ -180,6 +185,7 @@ impl<'a> Linear<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct UnbiasedLinear<'a> {
     weight: ViewTensor<'a>,
 }
@@ -207,6 +213,7 @@ impl<'a> UnbiasedLinear<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Embedding<'a> {
     weight: ViewTensor<'a>,
 }
@@ -228,6 +235,7 @@ impl<'a> Embedding<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct LayerNorm<'a> {
     weight: ViewTensor<'a>,
     bias: ViewTensor<'a>,
@@ -256,6 +264,7 @@ impl<'a> LayerNorm<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Gpt2<'a> {
     wte: Embedding<'a>,
     wpe: Embedding<'a>,

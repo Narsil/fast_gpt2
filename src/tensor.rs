@@ -31,6 +31,7 @@ pub trait TensorMut: Tensor {
     fn zeros(shape: Vec<usize>) -> Self;
 }
 
+#[derive(Clone)]
 pub struct ViewTensor<'data> {
     pub shape: Vec<usize>,
     pub data: &'data [f32],
