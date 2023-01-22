@@ -115,34 +115,15 @@ impl<'a> Gpt2Layer<'a> {
     }
 
     fn forward(&self, tensor: &mut OwnedTensor, past_key_value: &mut PastKeyValue) {
-        // println!("In {:?}", &tensor.data()[tensor.data().len() - 10..]);
         let residual = tensor.clone();
         self.ln_1.forward(tensor);
-        // println!("After ln1 {:?}", &tensor.data()[tensor.data().len() - 10..]);
         self.attention.forward(tensor, past_key_value);
-        // println!(
-        //     "After attention {:?}",
-        //     &tensor.data()[tensor.data().len() - 10..]
-        // );
         add(&residual, tensor);
-        // println!(
-        //     "After residual1 {:?}",
-        //     &tensor.data()[tensor.data().len() - 10..]
-        // );
         let residual = tensor.clone();
         self.ln_2.forward(tensor);
-        // println!(
-        //     "After ln_2 {:?}",
-        //     &tensor.data()[tensor.data().len() - 10..]
-        // );
+
         self.mlp.forward(tensor);
-        // println!("After mlp {:?}", &tensor.data()[tensor.data().len() - 10..]);
         add(&residual, tensor);
-        // println!(
-        //     "After layer {:?}",
-        //     &tensor.data()[tensor.data().len() - 10..]
-        // );
-        // todo!();
     }
 }
 
@@ -317,12 +298,15 @@ impl<'a> Gpt2<'a> {
             .collect()
     }
 
-    pub fn forward(&self, ids: &[u32], past_key_values: &mut PastKeyValues) -> OwnedTensor {
+    pub fn forward(&self, ids: &[u32], past: &mut PastKeyValues) -> OwnedTensor {
         let mut tensor = self.wte.forward(ids);
-        let positions: Vec<_> = (0..ids.len() as u32).collect();
+        let past_sequence_length = past[0].key.shape()[1];
+        let positions: Vec<u32> = (0..ids.len())
+            .map(|i| (i + past_sequence_length) as u32)
+            .collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
         add(&position_embeddings, &mut tensor);
-        self.h.forward(&mut tensor, past_key_values);
+        self.h.forward(&mut tensor, past);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
         tensor
@@ -428,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn attention() {
+    fn attention_data() {
         let filename = "model.safetensors";
         let file = std::fs::File::open(filename).unwrap();
         let buffer = unsafe { MmapOptions::new().map(&file).unwrap() };
@@ -448,7 +432,41 @@ mod tests {
             // Values obtained through python
             [0.0015, -0.0719, 0.0741, 0.0541, 0.0540, 0.0205, 0.0176, -0.0046, 0.0070, 0.0198]
         );
+    }
 
+    #[test]
+    fn attention() {
+        // Values gotten from Python
+        // ```python
+        // import torch
+        // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+        // config = GPT2Config(n_embd=8, n_head=2)
+        // attn = GPT2Attention(config)
+        // # remove dropout
+        // attn.eval()
+        // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+        // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+        // attn.c_proj.weight = torch.nn.Parameter(torch.arange(attn.c_proj.weight.nelement()).view(attn.c_proj.weight.shape).float())
+        // attn.c_proj.bias = torch.nn.Parameter(torch.arange(attn.c_proj.bias.nelement()).view(attn.c_proj.bias.shape).float())
+        // input = torch.ones((1, 3, 8))
+        // attn_weights, (past_key, past_value) = attn(input, use_cache=True)
+        // print(attn_weights.view(-1))
+        // print(past_key.shape)
+        // print(past_key.reshape(-1))
+        // print(past_value.shape)
+        // print(past_value.reshape(-1))
+        //
+        //
+        // print()
+        // print("Second pass")
+        // new_input = torch.ones((1, 1, 8))
+        // attn_weights2, (past_key, past_value) = attn(new_input, layer_past = (past_key, past_value), use_cache=True)
+        // print(attn_weights2.view(-1))
+        // print(past_key.shape)
+        // print(past_key.view(-1))
+        // print(past_value.shape)
+        // print(past_value.view(-1))
+        // ```
         let hidden_dim = 8;
         let num_heads = 2;
         let head_dim = hidden_dim / num_heads;
@@ -485,34 +503,6 @@ mod tests {
         attention.forward(&mut input, &mut past);
         assert_eq!(
             input.data(),
-            // Values gotten from Python
-            // ```python
-
-            // import torch
-            // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
-            // config = GPT2Config(n_embd=8, n_head=2)
-            // attn = GPT2Attention(config)
-            // # remove dropout
-            // attn.eval()
-            // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
-            // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
-            // attn.c_proj.weight = torch.nn.Parameter(torch.arange(attn.c_proj.weight.nelement()).view(attn.c_proj.weight.shape).float())
-            // attn.c_proj.bias = torch.nn.Parameter(torch.arange(attn.c_proj.bias.nelement()).view(attn.c_proj.bias.shape).float())
-            // input = torch.ones((1, 3, 8))
-            // attn_weights, (past_key, past_value) = attn(input, use_cache=True)
-            // print(attn_weights.view(-1))
-            // print(past_key.view(-1))
-            // print(past_value.view(-1))
-            //
-            // new_input = torch.ones((1, 1, 8))
-            // attn_weights2, (past_key, past_value) = attn(new_input, layer_past = (past_key, past_value), use_cache=True)
-            // print(attn_weights2.shape)
-            // print(attn_weights2.view(-1))
-            // print(past_key.shape)
-            // print(past_key.view(-1))
-            // print(past_value.shape)
-            // print(past_value.view(-1))
-            // ```
             &[
                 192864., 199645., 206426., 213207., 219988., 226769., 233550., 240331., 192864.,
                 199645., 206426., 213207., 219988., 226769., 233550., 240331., 192864., 199645.,

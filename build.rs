@@ -111,13 +111,13 @@ fn main() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build.rs");
 
     println!("cargo:rerun-if-env-changed=STATIC");
-    #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
+    #[cfg(feature = "intel-mkl")]
     let library = if std::env::var("STATIC").unwrap_or_else(|_| "0".to_string()) == "1" {
         Library::Static
     } else {
         Library::Dynamic
     };
-    #[cfg(any(feature = "intel-mkl", feature = "cblas"))]
+    #[cfg(feature = "intel-mkl")]
     let link_type: &str = if Library::Static == library {
         "static"
     } else {

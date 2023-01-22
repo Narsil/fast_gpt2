@@ -183,7 +183,11 @@ pub fn normalize<TM: TensorMut>(x: &mut TM, mean: &mut [f32], var: &mut [f32], e
 }
 
 #[inline]
-fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
+fn g_softmax<const CAUSAL: bool, TM: TensorMut>(
+    x: &mut TM,
+    max: &mut [f32],
+    past_sequence_length: usize,
+) {
     let dim = x.shape().len();
 
     let m = x.shape()[dim - 2];
@@ -194,7 +198,7 @@ fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     for (ii, &v) in x.data().iter().enumerate() {
         let i = ii / n;
         let j = ii % n;
-        if (!CAUSAL || i >= j) && v > current_max {
+        if (!CAUSAL || i + past_sequence_length >= j) && v > current_max {
             current_max = v;
         }
         if (j + 1) % n == 0 {
@@ -219,7 +223,7 @@ fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     for (ii, v) in x.data().iter().enumerate() {
         let i = (ii / n) % m;
         let j = ii % n;
-        if !CAUSAL || i >= j {
+        if !CAUSAL || i + past_sequence_length >= j {
             sum += v;
         }
         if (j + 1) % n == 0 {
@@ -230,7 +234,7 @@ fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
     x.data_mut().iter_mut().enumerate().for_each(|(ii, v)| {
         let i = (ii / n) % m;
         let j = ii % n;
-        if !CAUSAL || i >= j {
+        if !CAUSAL || i + past_sequence_length >= j {
             *v /= softmax[ii / n];
         } else {
             *v = 0.0;
@@ -239,10 +243,10 @@ fn g_softmax<const CAUSAL: bool, TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
 }
 
 pub fn softmax<TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
-    g_softmax::<false, TM>(x, max)
+    g_softmax::<false, TM>(x, max, 0)
 }
-pub fn causal_softmax<TM: TensorMut>(x: &mut TM, max: &mut [f32]) {
-    g_softmax::<true, TM>(x, max)
+pub fn causal_softmax<TM: TensorMut>(x: &mut TM, max: &mut [f32], past_sequence_length: usize) {
+    g_softmax::<true, TM>(x, max, past_sequence_length)
 }
 
 fn split_qkv<T: Tensor>(qkv: &T, past: &PastKeyValue) -> (OwnedTensor, OwnedTensor, OwnedTensor) {
@@ -254,13 +258,14 @@ fn split_qkv<T: Tensor>(qkv: &T, past: &PastKeyValue) -> (OwnedTensor, OwnedTens
     let num_heads = past.key.shape()[0];
     assert_eq!(hidden_dim % num_heads, 0);
     let head_dim = hidden_dim / num_heads;
-    let mut query_data = Vec::with_capacity(num_heads * sequence_length * head_dim);
+    let mut query_data = vec![0.0; num_heads * sequence_length * head_dim];
     (0..num_heads).for_each(|i| {
         (0..sequence_length).for_each(|j| {
             (0..head_dim).for_each(|k| {
                 let index = j * hidden_dim * 3 + i * head_dim + k;
+                let out_index = i * sequence_length * head_dim + j * head_dim + k;
                 let value = qkv.data()[index];
-                query_data.push(value);
+                query_data[out_index] = value;
             });
         });
     });
@@ -351,7 +356,8 @@ pub fn attention<T: Tensor, TM: TensorMut>(
     let head_dim = hidden_dim / num_heads;
     let scale = (head_dim as f32).sqrt();
     qk.data_mut().iter_mut().for_each(|v| *v /= scale);
-    softmax(qk, max);
+
+    causal_softmax(qk, max, past_sequence_length);
     matmul(qk, &value, out);
 
     let mut new_out = vec![0.0; sequence_length * hidden_dim];
@@ -499,22 +505,42 @@ mod tests {
         let mut a = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         // Large enough for the second test
         let mut max = vec![0.0; 3 * 2];
-        causal_softmax(&mut a, &mut max);
+        causal_softmax(&mut a, &mut max, 0);
         assert_eq!(
             simplify(&a.data[..]),
             // Values obtained through python
             [1.0000, 0.0000, 0.2689, 0.7311]
         );
 
+        let mut a = OwnedTensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        causal_softmax(&mut a, &mut max, 1);
+        assert_eq!(
+            simplify(&a.data[..]),
+            // Values obtained through python
+            [0.2689, 0.7311, 0.2689, 0.7311]
+        );
+
         let data: Vec<_> = (0..12).map(|i| (i + 1) as f32).collect();
         let mut a = OwnedTensor::new(data, vec![3, 2, 2]);
-        causal_softmax(&mut a, &mut max);
+        causal_softmax(&mut a, &mut max, 0);
         assert_eq!(
             simplify(&a.data[..]),
             // Values obtained through python
             [
                 1.0000, 0.0000, 0.2689, 0.7311, 1.0000, 0.0000, 0.2689, 0.7311, 1.0000, 0.0000,
                 0.2689, 0.7311
+            ]
+        );
+
+        let data: Vec<_> = (0..12).map(|i| (i + 1) as f32).collect();
+        let mut a = OwnedTensor::new(data, vec![2, 2, 3]);
+        causal_softmax(&mut a, &mut max, 1);
+        assert_eq!(
+            simplify(&a.data[..]),
+            // Values obtained through python
+            [
+                0.2689, 0.7311, 0.0, 0.09, 0.2447, 0.6652, 0.2689, 0.7311, 0.0, 0.09, 0.2447,
+                0.6652
             ]
         );
     }
@@ -533,6 +559,28 @@ mod tests {
 
     #[test]
     fn simple_attention_qk() {
+        // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+        // import torch
+        //
+        // config = GPT2Config(n_embd=8, n_head=2)
+        // attn = GPT2Attention(config)
+        // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+        // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+        //
+        // hidden_states = torch.arange(24).view((1, 3, 8)).float() / 24
+        // qkv = attn.c_attn(hidden_states)
+        // print(qkv.view(-1))
+        // query, key, value = qkv.split(attn.split_size, dim=2)
+        //
+        // query = attn._split_heads(query, attn.num_heads, attn.head_dim)
+        // key = attn._split_heads(key, attn.num_heads, attn.head_dim)
+        // value = attn._split_heads(value, attn.num_heads, attn.head_dim)
+        //
+        // print(query.reshape(-1))
+        // print(key.reshape(-1))
+        // key = key.transpose(-1, -2)
+        // attn_weights = torch.matmul(query, key)
+        // print(attn_weights.view(-1))
         let hidden_dim = 8;
         let num_heads = 2;
         let head_dim = hidden_dim / num_heads;
@@ -545,70 +593,97 @@ mod tests {
         let c_attn = Linear::new(weight, bias);
 
         let sequence_length = 3;
-        let mut qkv = OwnedTensor::new(
-            vec![1.0; sequence_length * hidden_dim],
-            vec![sequence_length, hidden_dim],
-        );
+        let data = (0..sequence_length * hidden_dim)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let mut qkv = OwnedTensor::new(data, vec![sequence_length, hidden_dim]);
         c_attn.forward(&mut qkv);
         assert_eq!(
             qkv.data(),
             [
-                672., 681., 690., 699., 708., 717., 726., 735., 744., 753., 762., 771., 780., 789.,
-                798., 807., 816., 825., 834., 843., 852., 861., 870., 879., 672., 681., 690., 699.,
-                708., 717., 726., 735., 744., 753., 762., 771., 780., 789., 798., 807., 816., 825.,
-                834., 843., 852., 861., 870., 879., 672., 681., 690., 699., 708., 717., 726., 735.,
-                744., 753., 762., 771., 780., 789., 798., 807., 816., 825., 834., 843., 852., 861.,
-                870., 879.
+                3360., 3389., 3418., 3447., 3476., 3505., 3534., 3563., 3592., 3621., 3650., 3679.,
+                3708., 3737., 3766., 3795., 3824., 3853., 3882., 3911., 3940., 3969., 3998., 4027.,
+                8736., 8829., 8922., 9015., 9108., 9201., 9294., 9387., 9480., 9573., 9666., 9759.,
+                9852., 9945., 10038., 10131., 10224., 10317., 10410., 10503., 10596., 10689.,
+                10782., 10875., 14112., 14269., 14426., 14583., 14740., 14897., 15054., 15211.,
+                15368., 15525., 15682., 15839., 15996., 16153., 16310., 16467., 16624., 16781.,
+                16938., 17095., 17252., 17409., 17566., 17723.
             ]
         );
-        // let mut qk = OwnedTensor::zeros(vec![num_heads, sequence_length, sequence_length]);
+        let mut qk = OwnedTensor::zeros(vec![num_heads, sequence_length, sequence_length]);
         let past = PastKeyValue::new(num_heads, 0, head_dim);
         let (query, key, _) = split_qkv(&qkv, &past);
         assert_eq!(
             query.data(),
             [
-                672., 681., 690., 699., 672., 681., 690., 699., 672., 681., 690., 699., 708., 717.,
-                726., 735., 708., 717., 726., 735., 708., 717., 726., 735.
+                3360., 3389., 3418., 3447., 8736., 8829., 8922., 9015., 14112., 14269., 14426.,
+                14583., 3476., 3505., 3534., 3563., 9108., 9201., 9294., 9387., 14740., 14897.,
+                15054., 15211.
             ]
         );
         assert_eq!(
             key.data(),
             [
-                744., 753., 762., 771., 744., 753., 762., 771., 744., 753., 762., 771., 780., 789.,
-                798., 807., 780., 789., 798., 807., 780., 789., 798., 807.
+                3592., 3621., 3650., 3679., 9480., 9573., 9666., 9759., 15368., 15525., 15682.,
+                15839., 3708., 3737., 3766., 3795., 9852., 9945., 10038., 10131., 15996., 16153.,
+                16310., 16467.
             ]
         );
-        // matmul_t(&query, &key, &mut qk);
-        // assert_eq!(
-        //     qk.data(),
-        //     // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
-        //     // import torch
-        //     //
-        //     // config = GPT2Config(n_embd=8, n_head=2)
-        //     // attn = GPT2Attention(config)
-        //     // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
-        //     // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
-        //     //
-        //     // hidden_states = torch.ones((1, 3, 8))
-        //     // qkv = attn.c_attn(hidden_states)
-        //     // query, key, value = qkv.split(attn.split_size, dim=2)
-        //     //
-        //     // query = attn._split_heads(query, attn.num_heads, attn.head_dim)
-        //     // key = attn._split_heads(key, attn.num_heads, attn.head_dim)
-        //     // value = attn._split_heads(value, attn.num_heads, attn.head_dim)
-        //     // key = key.transpose(-1, -2)
-        //     // attn_weights = torch.matmul(query, key)
-        //     // print(attn_weights.view(-1))
-        //     [
-        //         2077470., 2077470., 2077470., 2077470., 2077470., 2077470., 2077470., 2077470.,
-        //         2077470., 2290446., 2290446., 2290446., 2290446., 2290446., 2290446., 2290446.,
-        //         2290446., 2290446.
-        //     ]
-        // );
+        matmul_t(&query, &key, &mut qk);
+        qk.data()
+            .iter()
+            .zip([
+                49497900.0,
+                130973350.0,
+                212448800.0,
+                129081000.0,
+                341554720.0,
+                554028500.0,
+                208664100.0,
+                552136100.0,
+                895608200.0,
+                52817820.0,
+                140673820.0,
+                228529820.0,
+                138781470.0,
+                369628860.0,
+                600476200.0,
+                224745120.0,
+                598583900.0,
+                972422660.0,
+            ])
+            .for_each(|(&l, r)| {
+                assert!((l - r).abs() / l < 1e-7);
+            });
     }
 
     #[test]
     fn simple_attention() {
+        // Values gotten from Python
+        // ```python
+        // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+        // import torch
+        //
+        // config = GPT2Config(n_embd=8, n_head=2)
+        // attn = GPT2Attention(config)
+        // attn.eval()
+        // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+        // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+        //
+        // hidden_states = torch.ones((1, 3, 8))
+        // qkv = attn.c_attn(hidden_states)
+        // query, key, value = qkv.split(attn.split_size, dim=2)
+        //
+        // query = attn._split_heads(query, attn.num_heads, attn.head_dim)
+        // key = attn._split_heads(key, attn.num_heads, attn.head_dim)
+        // value = attn._split_heads(value, attn.num_heads, attn.head_dim)
+        // attn_output, _ = attn._attn(query, key, value)
+        // attn_output = attn._merge_heads(attn_output, attn.num_heads, attn.head_dim)
+        //
+        // print(key.reshape(-1))
+        // print(value.reshape(-1))
+        // print(attn_output.view(-1))
+        // ```
         let hidden_dim = 8;
         let num_heads = 2;
         let head_dim = hidden_dim / num_heads;
@@ -622,7 +697,7 @@ mod tests {
 
         let sequence_length = 3;
         let mut qkv = OwnedTensor::new(
-            vec![1.0; sequence_length * hidden_dim],
+            vec![1.0; hidden_dim * sequence_length],
             vec![sequence_length, hidden_dim],
         );
         let key = OwnedTensor::zeros(vec![num_heads, 0, head_dim]);
@@ -634,28 +709,6 @@ mod tests {
         let mut qv = OwnedTensor::zeros(vec![num_heads, sequence_length, head_dim]);
         let mut max = vec![0.0; sequence_length * num_heads];
         attention(&qkv, &mut qk, &mut max, &mut past, &mut qv);
-        assert_eq!(
-            // Values gotten from Python
-            // ```python
-            // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
-            // import torch
-            //
-            // config = GPT2Config(n_embd=8, n_head=2)
-            // attn = GPT2Attention(config)
-            // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
-            // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
-            // input = torch.ones((1, 3, 8))
-            // attn_weights, (past_key, past_value) = attn(input, use_cache=True)
-            // print(attn_weights.view(-1))
-            // print(past_key.view(-1))
-            // print(past_value.view(-1))
-            // ```
-            qv.data(),
-            [
-                816.0, 825.0, 834.0, 843.0, 852.0, 861.0, 870.0, 879.0, 816.0, 825.0, 834.0, 843.0,
-                852.0, 861.0, 870.0, 879.0, 816.0, 825.0, 834.0, 843.0, 852.0, 861.0, 870.0, 879.0
-            ]
-        );
         assert_eq!(past.key.shape(), vec![num_heads, sequence_length, head_dim]);
         assert_eq!(
             past.key.data(),
@@ -673,6 +726,13 @@ mod tests {
             [
                 816., 825., 834., 843., 816., 825., 834., 843., 816., 825., 834., 843., 852., 861.,
                 870., 879., 852., 861., 870., 879., 852., 861., 870., 879.
+            ]
+        );
+        assert_eq!(
+            qv.data(),
+            [
+                816., 825., 834., 843., 852., 861., 870., 879., 816., 825., 834., 843., 852., 861.,
+                870., 879., 816., 825., 834., 843., 852., 861., 870., 879.
             ]
         );
     }
