@@ -1,28 +1,42 @@
 use safetensors::tensor::{Dtype, TensorView};
 
+pub struct PastKeyValue {
+    pub key: OwnedTensor,
+    pub value: OwnedTensor,
+}
+
+impl PastKeyValue {
+    pub fn new(num_heads: usize, past_sequence_length: usize, head_dim: usize) -> Self {
+        let key = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        let value = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        Self { key, value }
+    }
+}
+
+pub type PastKeyValues = Vec<PastKeyValue>;
+
 pub trait Tensor {
-    fn as_ptr(&self) -> *const f32;
+    fn as_ptr(&self) -> *const f32 {
+        self.data().as_ptr()
+    }
     fn shape(&self) -> &[usize];
     fn data(&self) -> &[f32];
 }
 
-pub trait TensorMut {
+pub trait TensorMut: Tensor {
     fn data_mut(&mut self) -> &mut [f32];
     fn as_mut_ptr(&mut self) -> *mut f32 {
         self.data_mut().as_mut_ptr()
     }
+    fn zeros(shape: Vec<usize>) -> Self;
 }
 
 pub struct ViewTensor<'data> {
-    pub(crate) shape: Vec<usize>,
-    pub(crate) data: &'data [f32],
+    pub shape: Vec<usize>,
+    pub data: &'data [f32],
 }
 
 impl<'data> Tensor for ViewTensor<'data> {
-    fn as_ptr(&self) -> *const f32 {
-        self.data.as_ptr()
-    }
-
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -34,6 +48,7 @@ impl<'data> Tensor for ViewTensor<'data> {
 
 impl<'data> ViewTensor<'data> {
     pub fn new(data: &'data [f32], shape: Vec<usize>) -> Self {
+        assert_eq!(data.len(), shape.iter().product::<usize>());
         Self { shape, data }
     }
 }
@@ -63,8 +78,8 @@ impl<'data> From<TensorView<'data>> for ViewTensor<'data> {
 
 #[derive(Debug, Clone)]
 pub struct OwnedTensor {
-    pub(crate) shape: Vec<usize>,
-    pub(crate) data: Vec<f32>,
+    pub shape: Vec<usize>,
+    pub data: Vec<f32>,
 }
 
 impl Tensor for OwnedTensor {
@@ -85,9 +100,15 @@ impl TensorMut for OwnedTensor {
     fn data_mut(&mut self) -> &mut [f32] {
         &mut self.data
     }
+    fn zeros(shape: Vec<usize>) -> Self {
+        let nelement: usize = shape.iter().product();
+        let data = vec![0.0; nelement];
+        Self { shape, data }
+    }
 }
 impl OwnedTensor {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Self {
+        assert_eq!(data.len(), shape.iter().product::<usize>());
         Self { shape, data }
     }
 }
