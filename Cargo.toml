@@ -31,3 +31,6 @@ serde_json = "1.0.91"
 [features]
 cblas = ["dep:cblas-sys", "dep:libc"]
 intel-mkl = ["cblas"]
+
+[profile.release]
+lto = true
