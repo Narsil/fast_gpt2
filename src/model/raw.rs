@@ -1,4 +1,4 @@
-use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select};
+use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select, special_argmax};
 use crate::tensor::{OwnedTensor, PastKeyValue, PastKeyValues, Tensor, TensorMut, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
 
@@ -307,7 +307,7 @@ impl<'a> Gpt2<'a> {
             .collect()
     }
 
-    pub fn forward(&self, ids: &[u32], past: &mut PastKeyValues) -> OwnedTensor {
+    pub fn forward(&self, ids: &[u32], past: &mut PastKeyValues) -> usize {
         let mut tensor = self.wte.forward(ids);
         let past_sequence_length = past[0].key.shape()[1];
         let positions: Vec<u32> = (0..ids.len())
@@ -318,13 +318,15 @@ impl<'a> Gpt2<'a> {
         self.h.forward(&mut tensor, past);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
-        tensor
+        let logits = tensor;
+        special_argmax(&logits)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ops::split_qkv;
     use crate::tensor::{OwnedTensor, TensorMut, ViewTensor};
     use crate::tests::simplify;
     use memmap2::MmapOptions;
@@ -444,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn attention() {
+    fn simple_attention() {
         // Values gotten from Python
         // ```python
         // import torch
@@ -604,6 +606,186 @@ mod tests {
             // print(mlp(input)[0].view(-1))
             // ```
             &[4305280., 4338417., 4371554., 4404691., 4437828., 4470965., 4504102., 4537239.]
+        );
+    }
+
+    #[test]
+    fn simple_attention_qk() {
+        // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+        // import torch
+        //
+        // config = GPT2Config(n_embd=8, n_head=2)
+        // attn = GPT2Attention(config)
+        // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+        // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+        //
+        // hidden_states = torch.arange(24).view((1, 3, 8)).float() / 24
+        // qkv = attn.c_attn(hidden_states)
+        // print(qkv.view(-1))
+        // query, key, value = qkv.split(attn.split_size, dim=2)
+        //
+        // query = attn._split_heads(query, attn.num_heads, attn.head_dim)
+        // key = attn._split_heads(key, attn.num_heads, attn.head_dim)
+        // value = attn._split_heads(value, attn.num_heads, attn.head_dim)
+        //
+        // print(query.reshape(-1))
+        // print(key.reshape(-1))
+        // key = key.transpose(-1, -2)
+        // attn_weights = torch.matmul(query, key)
+        // print(attn_weights.view(-1))
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let head_dim = hidden_dim / num_heads;
+        let data = (0..hidden_dim * hidden_dim * 3)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = ViewTensor::new(&data, vec![hidden_dim, hidden_dim * 3]);
+        let data = (0..hidden_dim * 3).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = ViewTensor::new(&data, vec![hidden_dim * 3]);
+        let c_attn = Linear::new(weight, bias);
+
+        let sequence_length = 3;
+        let data = (0..sequence_length * hidden_dim)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let mut qkv = OwnedTensor::new(data, vec![sequence_length, hidden_dim]);
+        c_attn.forward(&mut qkv);
+        assert_eq!(
+            qkv.data(),
+            [
+                3360., 3389., 3418., 3447., 3476., 3505., 3534., 3563., 3592., 3621., 3650., 3679.,
+                3708., 3737., 3766., 3795., 3824., 3853., 3882., 3911., 3940., 3969., 3998., 4027.,
+                8736., 8829., 8922., 9015., 9108., 9201., 9294., 9387., 9480., 9573., 9666., 9759.,
+                9852., 9945., 10038., 10131., 10224., 10317., 10410., 10503., 10596., 10689.,
+                10782., 10875., 14112., 14269., 14426., 14583., 14740., 14897., 15054., 15211.,
+                15368., 15525., 15682., 15839., 15996., 16153., 16310., 16467., 16624., 16781.,
+                16938., 17095., 17252., 17409., 17566., 17723.
+            ]
+        );
+        let mut qk = OwnedTensor::zeros(vec![num_heads, sequence_length, sequence_length]);
+        let past = PastKeyValue::new(num_heads, 0, head_dim);
+        let (query, key, _) = split_qkv(&qkv, &past);
+        assert_eq!(
+            query.data(),
+            [
+                3360., 3389., 3418., 3447., 8736., 8829., 8922., 9015., 14112., 14269., 14426.,
+                14583., 3476., 3505., 3534., 3563., 9108., 9201., 9294., 9387., 14740., 14897.,
+                15054., 15211.
+            ]
+        );
+        assert_eq!(
+            key.data(),
+            [
+                3592., 3621., 3650., 3679., 9480., 9573., 9666., 9759., 15368., 15525., 15682.,
+                15839., 3708., 3737., 3766., 3795., 9852., 9945., 10038., 10131., 15996., 16153.,
+                16310., 16467.
+            ]
+        );
+        matmul_t(&query, &key, &mut qk);
+        qk.data()
+            .iter()
+            .zip([
+                49497900.0,
+                130973350.0,
+                212448800.0,
+                129081000.0,
+                341554720.0,
+                554028500.0,
+                208664100.0,
+                552136100.0,
+                895608200.0,
+                52817820.0,
+                140673820.0,
+                228529820.0,
+                138781470.0,
+                369628860.0,
+                600476200.0,
+                224745120.0,
+                598583900.0,
+                972422660.0,
+            ])
+            .for_each(|(&l, r)| {
+                assert!((l - r).abs() / l < 1e-7);
+            });
+    }
+
+    #[test]
+    fn simple_attention_ops() {
+        // Values gotten from Python
+        // ```python
+        // from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Config
+        // import torch
+        //
+        // config = GPT2Config(n_embd=8, n_head=2)
+        // attn = GPT2Attention(config)
+        // attn.eval()
+        // attn.c_attn.weight = torch.nn.Parameter(torch.arange(attn.c_attn.weight.nelement()).view(attn.c_attn.weight.shape).float())
+        // attn.c_attn.bias = torch.nn.Parameter(torch.arange(attn.c_attn.bias.nelement()).view(attn.c_attn.bias.shape).float())
+        //
+        // hidden_states = torch.ones((1, 3, 8))
+        // qkv = attn.c_attn(hidden_states)
+        // query, key, value = qkv.split(attn.split_size, dim=2)
+        //
+        // query = attn._split_heads(query, attn.num_heads, attn.head_dim)
+        // key = attn._split_heads(key, attn.num_heads, attn.head_dim)
+        // value = attn._split_heads(value, attn.num_heads, attn.head_dim)
+        // attn_output, _ = attn._attn(query, key, value)
+        // attn_output = attn._merge_heads(attn_output, attn.num_heads, attn.head_dim)
+        //
+        // print(key.reshape(-1))
+        // print(value.reshape(-1))
+        // print(attn_output.view(-1))
+        // ```
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let head_dim = hidden_dim / num_heads;
+        let data = (0..hidden_dim * hidden_dim * 3)
+            .map(|i| i as f32)
+            .collect::<Vec<_>>();
+        let weight = ViewTensor::new(&data, vec![hidden_dim, hidden_dim * 3]);
+        let data = (0..hidden_dim * 3).map(|i| i as f32).collect::<Vec<_>>();
+        let bias = ViewTensor::new(&data, vec![hidden_dim * 3]);
+        let c_attn = Linear::new(weight, bias);
+
+        let sequence_length = 3;
+        let mut qkv = OwnedTensor::new(
+            vec![1.0; hidden_dim * sequence_length],
+            vec![sequence_length, hidden_dim],
+        );
+        let key = OwnedTensor::zeros(vec![num_heads, 0, head_dim]);
+        let value = OwnedTensor::zeros(vec![num_heads, 0, head_dim]);
+        let mut past = PastKeyValue { key, value };
+        c_attn.forward(&mut qkv);
+        let mut qk = OwnedTensor::zeros(vec![num_heads, sequence_length, sequence_length]);
+
+        let mut qv = OwnedTensor::zeros(vec![num_heads, sequence_length, head_dim]);
+        let mut max = vec![0.0; sequence_length * num_heads];
+        attention(&qkv, &mut qk, &mut max, &mut past, &mut qv);
+        assert_eq!(past.key.shape(), vec![num_heads, sequence_length, head_dim]);
+        assert_eq!(
+            past.key.data(),
+            [
+                744., 753., 762., 771., 744., 753., 762., 771., 744., 753., 762., 771., 780., 789.,
+                798., 807., 780., 789., 798., 807., 780., 789., 798., 807.
+            ]
+        );
+        assert_eq!(
+            past.value.shape(),
+            vec![num_heads, sequence_length, head_dim]
+        );
+        assert_eq!(
+            past.value.data(),
+            [
+                816., 825., 834., 843., 816., 825., 834., 843., 816., 825., 834., 843., 852., 861.,
+                870., 879., 852., 861., 870., 879., 852., 861., 870., 879.
+            ]
+        );
+        assert_eq!(
+            qv.data(),
+            [
+                816., 825., 834., 843., 852., 861., 870., 879., 816., 825., 834., 843., 852., 861.,
+                870., 879., 816., 825., 834., 843., 852., 861., 870., 879.
+            ]
         );
     }
 }

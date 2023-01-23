@@ -4,7 +4,6 @@ pub mod ops;
 pub mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
-use crate::ops::special_argmax;
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
 use std::fs::File;
@@ -66,8 +65,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let mut current_ids = ids.clone();
     for _i in 0..10 {
         let start = std::time::Instant::now();
-        let logits = gpt2.forward(&current_ids, &mut past_key_values);
-        let new_id = special_argmax(&logits);
+        let new_id = gpt2.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
         current_ids = vec![new_id as u32];
         println!("Loop in {:?}", start.elapsed());

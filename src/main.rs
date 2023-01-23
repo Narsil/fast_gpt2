@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use fast_gpt2::{download::download, model::Gpt2, ops::special_argmax, Gpt2Error};
+use fast_gpt2::{download::download, model::Gpt2, Gpt2Error};
 use memmap2::{Mmap, MmapOptions};
 use safetensors::tensor::SafeTensors;
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,7 @@ async fn main() -> Result<(), Gpt2Error> {
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
     let port = std::env::var("PORT")
-        .unwrap_or("8000".to_string())
+        .unwrap_or_else(|_| "8000".to_string())
         .parse()?;
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::debug!("listening on {}", addr);
@@ -122,8 +122,7 @@ async fn inference((State(state), payload): (State<AppState>, String)) -> impl I
     let mut past_key_values = state.model.empty_past_key_values();
     let mut current_ids = ids.clone();
     for _i in 0..20 {
-        let logits = state.model.forward(&current_ids, &mut past_key_values);
-        let new_id = special_argmax(&logits);
+        let new_id = state.model.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
         current_ids = vec![new_id as u32];
     }
