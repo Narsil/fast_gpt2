@@ -1,4 +1,9 @@
-use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use fast_gpt2::{download::download, model::Gpt2, ops::special_argmax, Gpt2Error};
 use memmap2::{Mmap, MmapOptions};
 use safetensors::tensor::SafeTensors;
@@ -67,6 +72,7 @@ async fn main() -> Result<(), Gpt2Error> {
         // .route("/", get(root))
         // `POST /users` goes to `create_user`
         .route("/", post(inference))
+        .route("/", get(health))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
@@ -76,7 +82,10 @@ async fn main() -> Result<(), Gpt2Error> {
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
+    let port = std::env::var("PORT")
+        .unwrap_or("8000".to_string())
+        .parse()?;
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -97,9 +106,16 @@ struct Outputs {
     generated_text: String,
 }
 
-async fn inference(
-    (State(state), Json(payload)): (State<AppState>, Json<Inputs>),
-) -> impl IntoResponse {
+async fn health() -> impl IntoResponse {
+    "Ok"
+}
+
+async fn inference((State(state), payload): (State<AppState>, String)) -> impl IntoResponse {
+    let payload: Inputs = if let Ok(payload) = serde_json::from_str(&payload) {
+        payload
+    } else {
+        Inputs { inputs: payload }
+    };
     let tokenizer = state.tokenizer;
     let encoded = tokenizer.encode(payload.inputs, false).unwrap();
     let mut ids = encoded.get_ids().to_vec();
@@ -113,5 +129,5 @@ async fn inference(
     }
     let generated_text = tokenizer.decode(ids, false).unwrap();
     let output = Outputs { generated_text };
-    Json(output)
+    Json(vec![output])
 }
