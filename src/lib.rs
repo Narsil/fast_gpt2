@@ -33,12 +33,11 @@ pub enum Gpt2Error {
 
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
-    // curl https://huggingface.co/gpt2/resolve/main/model.safetensors
     let filename = "model.safetensors";
     let max_files = 100;
     let chunk_size = 10_000_000;
     if !std::path::Path::new(filename).exists() {
-        let url = "https://huggingface.co/Narsil/gpt2/resolve/main/model.safetensors";
+        let url = "https://huggingface.co/gpt2/resolve/main/model.safetensors";
         println!("Downloading {url:?} into {filename:?}");
         download(url, filename, max_files, chunk_size).await?;
     }

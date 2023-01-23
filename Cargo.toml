@@ -17,10 +17,15 @@ memmap2 = "0.5"
 reqwest = { version = "0.11", features = ["stream"] }
 safetensors = { git = "https://github.com/huggingface/safetensors", branch="forcing_alignment" }
 thiserror = "1.0"
-tokenizers = {version = "0.13.2", default-features=false, features=["onig"] }
+tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="main", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
 cblas-sys = { version = "0.1.4", default-features = false, optional = true }
 libc = { version = "0.2", default-features = false, optional = true }
+tracing-subscriber = "0.3.16"
+axum = "0.6.3"
+tracing = "0.1.37"
+serde = { version = "1.0.152", features = ["serde_derive"] }
+tower-http = { version = "0.3.5", features = ["trace"] }
 
 [features]
 cblas = ["dep:cblas-sys", "dep:libc"]
