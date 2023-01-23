@@ -33,6 +33,7 @@ COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.s
 COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/lib/
 COPY --from=build /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/lib/
 COPY --from=build /opt/intel/oneapi/compiler/2022.1.0/linux/compiler/lib/intel64_lin/libiomp5.so /usr/lib/
+ENV PORT=80
 # COPY tokenizer.json .
 # COPY model.safetensors .
 CMD ["fast_gpt2"]
