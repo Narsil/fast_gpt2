@@ -2,6 +2,8 @@
 
 Experiment to run from load to finish ML almost 5x faster, works mostly by optimizing load.
 
+[![Fast gpt2 on a real cluster is 3x faster to run](https://img.youtube.com/vi/yqHLIIgOze8/0.jpg)](https://www.youtube.com/watch?v=yqHLIIgOze8)
+
 This is an experimental test to remove the need for PyTorch and have a highly specific
 runtime that enables to load much faster than using regular PyTorch + transformers using
 `safetensors` and direct memory mapping.
