@@ -17,7 +17,7 @@ memmap2 = "0.5"
 reqwest = { version = "0.11", features = ["stream"] }
 safetensors = { git = "https://github.com/huggingface/safetensors", branch="forcing_alignment" }
 thiserror = "1.0"
-tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="tokenizer_clone" }
+tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="main", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
 cblas-sys = { version = "0.1.4", default-features = false, optional = true }
 libc = { version = "0.2", default-features = false, optional = true }
