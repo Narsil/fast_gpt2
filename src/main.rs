@@ -129,5 +129,5 @@ async fn inference((State(state), payload): (State<AppState>, String)) -> impl I
     }
     let generated_text = tokenizer.decode(ids, false).unwrap();
     let output = Outputs { generated_text };
-    Json(output)
+    Json(vec![output])
 }
