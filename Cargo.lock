@@ -274,9 +274,12 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
+source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#30f445fa65947bcba148260792d21c98bebe7c31"
 dependencies = [
+ "cblas-sys",
  "cudarc",
  "glob",
+ "libc",
  "matrixmultiply",
  "no-std-compat",
  "rand",
