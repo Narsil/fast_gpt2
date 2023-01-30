@@ -1,14 +1,22 @@
 use dfdx::nn::{BuildOnDevice, Linear, Module, UnbiasedLinear};
 use dfdx::prelude::{
-    Axis, BuildModule, Const, Cpu, Device, Embedding, LayerNorm1D, Rank0, Rank1, Rank2, Rank3,
-    Shape, Tensor, TensorFromArray, ZerosTensor,
+    Axis, BuildModule, Const, Device, Embedding, LayerNorm1D, Rank0, Rank1, Rank2, Rank3, Shape,
+    Tensor, TensorFromArray, ZerosTensor,
 };
 use dfdx::shapes::{Dim, Dyn, HasShape};
 use dfdx::tensor::AsArray;
 use dfdx::tensor_ops::{GatherTo, MaxTo, PermuteTo, ReshapeTo, TryMatMul};
 use safetensors::tensor::SafeTensors;
 
+#[cfg(not(feature = "cuda"))]
+use dfdx::prelude::Cpu;
+#[cfg(not(feature = "cuda"))]
 type Dev = Cpu;
+
+#[cfg(feature = "cuda")]
+use dfdx::prelude::Cuda;
+#[cfg(feature = "cuda")]
+type Dev = Cuda;
 const HIDDEN_DIM: usize = 768;
 const NUM_HEADS: usize = 12;
 const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
@@ -20,17 +28,17 @@ const SEQ: char = 'S';
 type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 
 pub struct PastKeyValue {
-    pub key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)>,
-    pub value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)>,
+    pub key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), f32, Dev>,
+    pub value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), f32, Dev>,
 }
 
 impl PastKeyValue {
     pub fn new(past_sequence_length: usize) -> Self {
         let dev: Dev = Default::default();
         let past_sequence_length = Dyn::<PAST>(past_sequence_length);
-        let key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)> =
+        let key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), _, _> =
             dev.zeros_like(&(Const, past_sequence_length, Const));
-        let value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)> =
+        let value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), _, _> =
             dev.zeros_like(&(Const, past_sequence_length, Const));
         Self { key, value }
     }
@@ -38,9 +46,10 @@ impl PastKeyValue {
 
 pub type PastKeyValues = Vec<PastKeyValue>;
 
+#[derive(Clone)]
 pub struct Mlp {
-    c_fc: Linear<HIDDEN_DIM, FF_DIM>,
-    c_proj: Linear<FF_DIM, HIDDEN_DIM>,
+    c_fc: Linear<HIDDEN_DIM, FF_DIM, Dev>,
+    c_proj: Linear<FF_DIM, HIDDEN_DIM, Dev>,
 }
 
 impl Mlp {
@@ -65,16 +74,17 @@ impl Mlp {
         Self { c_fc, c_proj }
     }
 
-    fn forward(&self, tensor: Tensor<HiddenShape>) -> Tensor<HiddenShape> {
+    fn forward(&self, tensor: Tensor<HiddenShape, f32, Dev>) -> Tensor<HiddenShape, f32, Dev> {
         let tensor = self.c_fc.forward(tensor);
         let tensor = tensor.gelu();
         self.c_proj.forward(tensor)
     }
 }
 
+#[derive(Clone)]
 pub struct Attention {
-    c_attn: Linear<HIDDEN_DIM, { 3 * HIDDEN_DIM }>,
-    c_proj: Linear<HIDDEN_DIM, HIDDEN_DIM>,
+    c_attn: Linear<HIDDEN_DIM, { 3 * HIDDEN_DIM }, Dev>,
+    c_proj: Linear<HIDDEN_DIM, HIDDEN_DIM, Dev>,
 }
 
 impl Attention {
@@ -104,9 +114,9 @@ impl Attention {
 
     pub fn forward(
         &self,
-        hidden_states: Tensor<HiddenShape>,
+        hidden_states: Tensor<HiddenShape, f32, Dev>,
         past: &mut PastKeyValue,
-    ) -> Tensor<HiddenShape> {
+    ) -> Tensor<HiddenShape, f32, Dev> {
         type PreSplitHead = (Dyn<SEQ>, Const<NUM_HEADS>, Const<HEAD_DIM>);
         type SplitQuery = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
         type SplitKeys = (Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<'T'>);
@@ -120,27 +130,28 @@ impl Attention {
         let dev: Dev = Default::default();
         let qkv = self.c_attn.forward(hidden_states);
 
-        let q: Tensor<SplitQuery> = dev.zeros_like(&(Const, sequence_length, Const));
-        let k: Tensor<SplitKeys> = dev.zeros_like(&(Const, Const, total_length));
+        let q: Tensor<SplitQuery, f32, Dev> = dev.zeros_like(&(Const, sequence_length, Const));
+        let k: Tensor<SplitKeys, f32, Dev> = dev.zeros_like(&(Const, Const, total_length));
 
         // Get weights
         let scalar: f32 = 1.0 / (HEAD_DIM as f32).sqrt();
         let weights = q.matmul(k) * scalar;
         let weights = weights.softmax::<Axis<2>>();
 
-        let v: Tensor<SplitValues> = dev.zeros_like(&(Const, total_length, Const));
+        let v: Tensor<SplitValues, f32, Dev> = dev.zeros_like(&(Const, total_length, Const));
 
         // Get new tokens
-        let tokens: Tensor<Weights> = weights.try_matmul(v).unwrap();
+        let tokens: Tensor<Weights, f32, Dev> = weights.try_matmul(v).unwrap();
         let tokens = tokens.permute::<PreSplitHead, _>();
         // TODO XXX: For some reason this fails.
         // let tokens = tokens.reshape::<HiddenShape>();
-        let tokens: Tensor<HiddenShape> = dev.zeros_like(&(sequence_length, Const));
+        let tokens: Tensor<HiddenShape, f32, Dev> = dev.zeros_like(&(sequence_length, Const));
 
         self.c_proj.forward(tokens)
     }
 }
 
+#[derive(Clone)]
 pub struct Gpt2Layer {
     ln_1: LayerNorm1D<HIDDEN_DIM, Dev>,
     ln_2: LayerNorm1D<HIDDEN_DIM, Dev>,
@@ -173,9 +184,9 @@ impl Gpt2Layer {
 
     fn forward(
         &self,
-        tensor: Tensor<HiddenShape>,
+        tensor: Tensor<HiddenShape, f32, Dev>,
         past_key_value: &mut PastKeyValue,
-    ) -> Tensor<HiddenShape> {
+    ) -> Tensor<HiddenShape, f32, Dev> {
         let residual = tensor.clone();
         let tensor = self.ln_1.forward(tensor);
         let tensor = self.attention.forward(tensor, past_key_value);
@@ -187,6 +198,7 @@ impl Gpt2Layer {
         tensor
     }
 }
+#[derive(Clone)]
 pub struct Gpt2Model {
     layers: Vec<Gpt2Layer>,
 }
@@ -201,9 +213,9 @@ impl Gpt2Model {
 
     fn forward(
         &self,
-        mut tensor: Tensor<HiddenShape>,
+        mut tensor: Tensor<HiddenShape, f32, Dev>,
         past_key_values: &mut PastKeyValues,
-    ) -> Tensor<HiddenShape> {
+    ) -> Tensor<HiddenShape, f32, Dev> {
         for (layer, past_key_value) in self.layers.iter().zip(past_key_values.iter_mut()) {
             tensor = layer.forward(tensor, past_key_value);
         }
@@ -211,12 +223,13 @@ impl Gpt2Model {
     }
 }
 
+#[derive(Clone)]
 pub struct Gpt2 {
     wte: Embedding<VOCAB_SIZE, HIDDEN_DIM, Dev>,
     wpe: Embedding<VOCAB_SIZE, HIDDEN_DIM, Dev>,
     h: Gpt2Model,
     ln_f: LayerNorm1D<HIDDEN_DIM, Dev>,
-    lm_head: UnbiasedLinear<HIDDEN_DIM, VOCAB_SIZE>,
+    lm_head: UnbiasedLinear<HIDDEN_DIM, VOCAB_SIZE, Dev>,
 }
 
 impl Gpt2 {
@@ -249,10 +262,10 @@ impl Gpt2 {
         let positions: Vec<usize> = (0..ids.len()).map(|i| (i + past_sequence_length)).collect();
 
         let nn = Dyn::<SEQ>(n);
-        let mut input_ids: Tensor<(Dyn<SEQ>,), usize> = dev.zeros_like(&(nn,));
+        let mut input_ids: Tensor<(Dyn<SEQ>,), usize, Dev> = dev.zeros_like(&(nn,));
         input_ids.copy_from(&ids);
 
-        let mut position_ids: Tensor<(Dyn<SEQ>,), usize> = dev.zeros_like(&(nn,));
+        let mut position_ids: Tensor<(Dyn<SEQ>,), usize, Dev> = dev.zeros_like(&(nn,));
         position_ids.copy_from(&positions);
 
         let input_embeds = self.wte.forward(input_ids);
@@ -261,7 +274,7 @@ impl Gpt2 {
         let x = self.h.forward(embeds, past);
         let x = self.ln_f.forward(x);
         let y = self.lm_head.forward(x);
-        let last_logits: Tensor<Rank2<1, VOCAB_SIZE>> = y.gather(dev.tensor([n - 1]));
+        let last_logits: Tensor<Rank2<1, VOCAB_SIZE>, _, _> = y.gather(dev.tensor([n - 1]));
 
         let mut argmax = 0;
         let mut max = f32::NEG_INFINITY;

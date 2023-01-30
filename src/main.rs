@@ -16,6 +16,9 @@ use tracing::{instrument, Level};
 
 #[derive(Clone)]
 struct AppState {
+    #[cfg(feature = "dfdx")]
+    model: Gpt2,
+    #[cfg(not(feature = "dfdx"))]
     model: Gpt2<'static>,
     tokenizer: Tokenizer,
 }

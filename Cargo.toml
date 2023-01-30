@@ -33,6 +33,7 @@ dfdx = { git = "https://github.com/Narsil/dfdx", branch="fast_gpt2", optional= t
 cblas = ["dep:cblas-sys", "dep:libc"]
 intel-mkl = ["cblas"]
 dfdx = ["dep:dfdx"]
+cuda = ["dfdx/cuda"]
 
 [profile.release]
 lto = true
