@@ -3,31 +3,34 @@ use dfdx::prelude::{
     Axis, BuildModule, Const, Cpu, Device, Embedding, LayerNorm1D, Rank0, Rank1, Rank2, Rank3,
     Shape, Tensor, TensorFromArray, ZerosTensor,
 };
-use dfdx::shapes::HasShape;
+use dfdx::shapes::{Dim, Dyn, HasShape};
 use dfdx::tensor::AsArray;
 use dfdx::tensor_ops::{GatherTo, MaxTo, PermuteTo, ReshapeTo, TryMatMul};
 use safetensors::tensor::SafeTensors;
 
 type Dev = Cpu;
-type HiddenShape = (usize, Const<HIDDEN_DIM>);
 const HIDDEN_DIM: usize = 768;
 const NUM_HEADS: usize = 12;
 const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
 const NUM_LAYERS: usize = 12;
 const VOCAB_SIZE: usize = 50257;
 const FF_DIM: usize = HIDDEN_DIM * 4;
+const PAST: char = 'P';
+const SEQ: char = 'S';
+type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 
 pub struct PastKeyValue {
-    pub key: Tensor<(Const<NUM_HEADS>, usize, Const<HEAD_DIM>)>,
-    pub value: Tensor<(Const<NUM_HEADS>, usize, Const<HEAD_DIM>)>,
+    pub key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)>,
+    pub value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)>,
 }
 
 impl PastKeyValue {
     pub fn new(past_sequence_length: usize) -> Self {
         let dev: Dev = Default::default();
-        let key: Tensor<(Const<NUM_HEADS>, usize, Const<HEAD_DIM>)> =
+        let past_sequence_length = Dyn::<PAST>(past_sequence_length);
+        let key: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)> =
             dev.zeros_like(&(Const, past_sequence_length, Const));
-        let value: Tensor<(Const<NUM_HEADS>, usize, Const<HEAD_DIM>)> =
+        let value: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>)> =
             dev.zeros_like(&(Const, past_sequence_length, Const));
         Self { key, value }
     }
@@ -104,30 +107,31 @@ impl Attention {
         hidden_states: Tensor<HiddenShape>,
         past: &mut PastKeyValue,
     ) -> Tensor<HiddenShape> {
-        type PreSplitHead = (usize, Const<NUM_HEADS>, Const<HEAD_DIM>);
-        type SplitHead = (Const<NUM_HEADS>, usize, Const<HEAD_DIM>);
-        type SplitValuesHead = (Const<NUM_HEADS>, Const<HEAD_DIM>, usize);
+        type PreSplitHead = (Dyn<SEQ>, Const<NUM_HEADS>, Const<HEAD_DIM>);
+        type SplitQuery = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
+        type SplitKeys = (Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<'T'>);
+        type SplitValues = (Const<NUM_HEADS>, Dyn<'T'>, Const<HEAD_DIM>);
+        type Weights = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
 
         let sequence_length = hidden_states.shape().0;
         let past_sequence_length = past.key.shape().1;
+        let total_length = Dyn::<'T'>(sequence_length.size() + past_sequence_length.size());
 
         let dev: Dev = Default::default();
         let qkv = self.c_attn.forward(hidden_states);
 
-        let q: Tensor<SplitHead> = dev.zeros_like(&(Const, sequence_length, Const));
-        let k: Tensor<SplitValuesHead> =
-            dev.zeros_like(&(Const, Const, past_sequence_length + sequence_length));
+        let q: Tensor<SplitQuery> = dev.zeros_like(&(Const, sequence_length, Const));
+        let k: Tensor<SplitKeys> = dev.zeros_like(&(Const, Const, total_length));
 
         // Get weights
         let scalar: f32 = 1.0 / (HEAD_DIM as f32).sqrt();
         let weights = q.matmul(k) * scalar;
         let weights = weights.softmax::<Axis<2>>();
 
-        let v: Tensor<SplitHead> =
-            dev.zeros_like(&(Const, past_sequence_length + sequence_length, Const));
+        let v: Tensor<SplitValues> = dev.zeros_like(&(Const, total_length, Const));
 
         // Get new tokens
-        let tokens: Tensor<SplitHead> = weights.try_matmul(v).unwrap();
+        let tokens: Tensor<Weights> = weights.try_matmul(v).unwrap();
         let tokens = tokens.permute::<PreSplitHead, _>();
         // TODO XXX: For some reason this fails.
         // let tokens = tokens.reshape::<HiddenShape>();
@@ -240,14 +244,15 @@ impl Gpt2 {
     pub fn forward(&self, ids: &[u32], past: &mut PastKeyValues) -> usize {
         let dev: Dev = Default::default();
         let n = ids.len();
-        let past_sequence_length = past[0].key.shape().1;
+        let past_sequence_length = past[0].key.shape().1.size();
         let ids: Vec<usize> = ids.iter().map(|id| *id as usize).collect();
         let positions: Vec<usize> = (0..ids.len()).map(|i| (i + past_sequence_length)).collect();
 
-        let mut input_ids: Tensor<(usize,), usize> = dev.zeros_like(&(n,));
+        let nn = Dyn::<SEQ>(n);
+        let mut input_ids: Tensor<(Dyn<SEQ>,), usize> = dev.zeros_like(&(nn,));
         input_ids.copy_from(&ids);
 
-        let mut position_ids: Tensor<(usize,), usize> = dev.zeros_like(&(n,));
+        let mut position_ids: Tensor<(Dyn<SEQ>,), usize> = dev.zeros_like(&(nn,));
         position_ids.copy_from(&positions);
 
         let input_embeds = self.wte.forward(input_ids);

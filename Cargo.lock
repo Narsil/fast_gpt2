@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
-source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#30f445fa65947bcba148260792d21c98bebe7c31"
+source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#1907743619723a697541edf5f6b61acd173bd6d3"
 dependencies = [
  "cblas-sys",
  "cudarc",
@@ -1473,9 +1473,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.24.2"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "597a12a59981d9e3c38d216785b0c37399f6e415e8d0712047620f189371b0bb"
+checksum = "c8e00990ebabbe4c14c08aca901caed183ecd5c09562a12c824bb53d3c3fd3af"
 dependencies = [
  "autocfg",
  "bytes",
