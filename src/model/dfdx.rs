@@ -1,12 +1,12 @@
 use crate::tensor::to_f32;
-use dfdx::nn::{BuildOnDevice, Linear, Module, UnbiasedLinear};
+use dfdx::nn::{Linear, Module, UnbiasedLinear};
 use dfdx::prelude::{
-    Axis, BuildModule, Const, Device, Dtype, Embedding, LayerNorm1D, Rank0, Rank1, Rank2, Rank3,
-    Shape, Tensor, TensorFrom, ZerosTensor,
+    Axis, BuildModule, Const, Device, Embedding, LayerNorm1D, Rank2, Shape, Tensor, TensorFrom,
+    ZerosTensor,
 };
 use dfdx::shapes::{Dim, Dyn, HasShape};
 use dfdx::tensor::AsArray;
-use dfdx::tensor_ops::{GatherTo, MaxTo, PermuteTo, ReshapeTo, TryMatMul};
+use dfdx::tensor_ops::{GatherTo, PermuteTo, TryMatMul};
 use safetensors::tensor::{SafeTensorError, SafeTensors, TensorView};
 
 #[cfg(not(feature = "cuda"))]
@@ -28,7 +28,7 @@ const FF_DIM: usize = HIDDEN_DIM * 4;
 const PAST: char = 'P';
 const SEQ: char = 'S';
 // TODO use something different without figthing compiler too much
-const PAST_PLUS_SEQ: char = 'P';
+const PAST_PLUS_SEQ: char = 'T';
 type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 
 pub struct PastKeyValue {
@@ -230,22 +230,23 @@ impl Attention {
         // println!("K vec {:?} {:?}", &k_vec[..5], &k_vec[k_vec.len() - 5..]);
         // println!("V vec {:?} {:?}", &v_vec[..5], &v_vec[v_vec.len() - 5..]);
 
-        // let total_length = Dyn::<PAST>(sequence_length.size() + past_sequence_length.size());
-        // let mut present_k: Tensor<(Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<PAST>), f32, Dev> =
-        //     dev.zeros_like(&(Const, Const, total_length));
-        // let mut present_k_vec = vec![0.0; present_k.shape().num_elements()];
-        // k.copy_into(&mut present_k_vec);
-        // present_k.copy_from(&present_k_vec);
-        // past.key = present_k;
-        // let mut present_v: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), f32, Dev> =
-        //     dev.zeros_like(&(Const, total_length, Const));
-        // let mut present_v_vec = vec![0.0; present_v.shape().num_elements()];
-        // k.copy_into(&mut present_v_vec);
-        // present_v.copy_from(&present_v_vec);
-        // past.value = present_v;
+        let total_length = Dyn::<PAST>(sequence_length.size() + past_sequence_length.size());
+        let mut present_k: Tensor<(Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<PAST>), f32, Dev> =
+            dev.zeros_like(&(Const, Const, total_length));
+        let mut present_k_vec = vec![0.0; present_k.shape().num_elements()];
+        k.copy_into(&mut present_k_vec);
+        present_k.copy_from(&present_k_vec);
+        past.key = present_k;
 
-        past.key = k.clone();
-        past.value = v.clone();
+        let mut present_v: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), f32, Dev> =
+            dev.zeros_like(&(Const, total_length, Const));
+        let mut present_v_vec = vec![0.0; present_v.shape().num_elements()];
+        v.copy_into(&mut present_v_vec);
+        present_v.copy_from(&present_v_vec);
+        past.value = present_v;
+
+        // past.key = k.clone();
+        // past.value = v.clone();
 
         // Get weights
         let scalar: f32 = 1.0 / (HEAD_DIM as f32).sqrt();
