@@ -32,8 +32,8 @@ dfdx = { path = "../dfdx", optional= true, default-features=false, features=["sa
 
 [features]
 cblas = ["dep:cblas-sys", "dep:libc"]
-intel-mkl = ["cblas", "dfdx/intel-mkl"]
-dfdx = ["dep:dfdx"]
+intel-mkl = ["cblas"]
+dfdx_intel = ["dfdx/intel-mkl"]
 cuda = ["dfdx/cuda"]
 
 [profile.release]

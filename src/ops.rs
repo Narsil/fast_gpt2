@@ -355,11 +355,21 @@ pub fn attention<T: Tensor, TM: TensorMut>(
 
     let (query, key, value) = split_qkv(qkv, past);
 
-    println!(
-        "Q vec {:?} {:?}",
-        &query.data()[..5],
-        &query.data()[query.data().len() - 5..]
-    );
+    // println!(
+    //     "Q vec {:?} {:?}",
+    //     &query.data()[..5],
+    //     &query.data()[query.data().len() - 5..]
+    // );
+    // println!(
+    //     "K vec {:?} {:?}",
+    //     &key.data()[..5],
+    //     &key.data()[key.data().len() - 5..]
+    // );
+    // println!(
+    //     "V vec {:?} {:?}",
+    //     &value.data()[..5],
+    //     &value.data()[value.data().len() - 5..]
+    // );
 
     matmul_t(&query, &key, qk);
     let head_dim = hidden_dim / num_heads;
@@ -367,7 +377,11 @@ pub fn attention<T: Tensor, TM: TensorMut>(
     qk.data_mut().iter_mut().for_each(|v| *v /= scale);
 
     causal_softmax(qk, max, past_sequence_length);
+    // let tmp = qk.data();
+    // println!("weights {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
     matmul(qk, &value, out);
+    // let tmp = out.data();
+    // println!("post value {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
 
     let mut new_out = vec![0.0; sequence_length * hidden_dim];
     (0..num_heads).for_each(|i| {
@@ -380,6 +394,8 @@ pub fn attention<T: Tensor, TM: TensorMut>(
         });
     });
     *out = OwnedTensor::new(new_out, vec![sequence_length, hidden_dim]);
+    // let tmp = out.data();
+    // println!("tokens vec {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
     *past = PastKeyValue { key, value };
 }
 

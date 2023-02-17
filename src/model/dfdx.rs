@@ -8,7 +8,6 @@ use dfdx::shapes::{Dim, Dyn, HasShape};
 use dfdx::tensor::AsArray;
 use dfdx::tensor_ops::{GatherTo, MaxTo, PermuteTo, ReshapeTo, TryMatMul};
 use safetensors::tensor::{SafeTensorError, SafeTensors, TensorView};
-use std::borrow::Cow;
 
 #[cfg(not(feature = "cuda"))]
 use dfdx::prelude::Cpu;
@@ -24,9 +23,11 @@ const NUM_HEADS: usize = 12;
 const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
 const NUM_LAYERS: usize = 12;
 const VOCAB_SIZE: usize = 50257;
+const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;
 const PAST: char = 'P';
 const SEQ: char = 'S';
+// TODO use something different without figthing compiler too much
 const PAST_PLUS_SEQ: char = 'P';
 type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 
@@ -61,9 +62,21 @@ fn linear_from<const I: usize, const O: usize, D: Device<f32>>(
 ) -> Linear<I, O, D> {
     let dev: D = Default::default();
     let mut linear: Linear<I, O, D> = BuildModule::build(&dev);
-    linear.weight.copy_from(to_f32(&weight));
+    let mut weight_tensor: Tensor<(Const<I>, Const<O>), f32, D> = dev.zeros_like(&(Const, Const));
+    weight_tensor.copy_from(to_f32(&weight));
+    let weight_t: Tensor<(Const<O>, Const<I>), f32, D> = weight_tensor.permute();
+    linear.weight = weight_t;
     linear.bias.copy_from(to_f32(&bias));
     linear
+}
+
+fn unbiased_linear_from<const I: usize, const O: usize, D: Device<f32>>(
+    weight: TensorView,
+) -> UnbiasedLinear<I, O, D> {
+    let dev: D = Default::default();
+    let mut unbiased_linear: UnbiasedLinear<I, O, D> = BuildModule::build(&dev);
+    unbiased_linear.weight.copy_from(to_f32(&weight));
+    unbiased_linear
 }
 
 fn layer_norm_from<const M: usize, D: Device<f32>>(
@@ -77,9 +90,17 @@ fn layer_norm_from<const M: usize, D: Device<f32>>(
     layer_norm
 }
 
+fn embedding_from<const I: usize, const O: usize, D: Device<f32>>(
+    weight: TensorView,
+) -> Embedding<I, O, D> {
+    let dev: D = Default::default();
+    let mut embedding: Embedding<I, O, D> = BuildModule::build(&dev);
+    embedding.weight.copy_from(to_f32(&weight));
+    embedding
+}
+
 impl Mlp {
     fn from_tensors(index: usize, tensors: &SafeTensors) -> Result<Self, SafeTensorError> {
-        let dev: Dev = Default::default();
         let c_fc = linear_from(
             tensors.tensor(&format!("h.{index}.mlp.c_fc.weight"))?,
             tensors.tensor(&format!("h.{index}.mlp.c_fc.bias"))?,
@@ -105,11 +126,7 @@ pub struct Attention {
 }
 
 impl Attention {
-    fn from_tensors(
-        index: usize,
-        tensors: &SafeTensors,
-        num_heads: usize,
-    ) -> Result<Self, SafeTensorError> {
+    fn from_tensors(index: usize, tensors: &SafeTensors) -> Result<Self, SafeTensorError> {
         let c_attn = linear_from(
             tensors.tensor(&format!("h.{index}.attn.c_attn.weight"))?,
             tensors.tensor(&format!("h.{index}.attn.c_attn.bias"))?,
@@ -126,7 +143,6 @@ impl Attention {
         hidden_states: Tensor<HiddenShape, f32, Dev>,
         past: &mut PastKeyValue,
     ) -> Tensor<HiddenShape, f32, Dev> {
-        type PreSplitHead = (Dyn<SEQ>, Const<NUM_HEADS>, Const<HEAD_DIM>);
         type SplitQuery = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
         type SplitKeys = (Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<PAST_PLUS_SEQ>);
         type SplitValues = (Const<NUM_HEADS>, Dyn<PAST_PLUS_SEQ>, Const<HEAD_DIM>);
@@ -139,6 +155,9 @@ impl Attention {
 
         let dev: Dev = Default::default();
         let qkv = self.c_attn.forward(hidden_states);
+        // let mut tmp = vec![0.0; qkv.shape().num_elements()];
+        // qkv.copy_into(&mut tmp);
+        // println!("Qkv {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
 
         let mut qkv_vec = vec![0.0; qkv.shape().num_elements()];
         qkv.copy_into(&mut qkv_vec);
@@ -207,7 +226,23 @@ impl Attention {
         k.copy_from(&k_vec);
         v.copy_from(&v_vec);
 
-        println!("Q vec {:?} {:?}", &q_vec[..5], &q_vec[q_vec.len() - 5..]);
+        // println!("Q vec {:?} {:?}", &q_vec[..5], &q_vec[q_vec.len() - 5..]);
+        // println!("K vec {:?} {:?}", &k_vec[..5], &k_vec[k_vec.len() - 5..]);
+        // println!("V vec {:?} {:?}", &v_vec[..5], &v_vec[v_vec.len() - 5..]);
+
+        // let total_length = Dyn::<PAST>(sequence_length.size() + past_sequence_length.size());
+        // let mut present_k: Tensor<(Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<PAST>), f32, Dev> =
+        //     dev.zeros_like(&(Const, Const, total_length));
+        // let mut present_k_vec = vec![0.0; present_k.shape().num_elements()];
+        // k.copy_into(&mut present_k_vec);
+        // present_k.copy_from(&present_k_vec);
+        // past.key = present_k;
+        // let mut present_v: Tensor<(Const<NUM_HEADS>, Dyn<PAST>, Const<HEAD_DIM>), f32, Dev> =
+        //     dev.zeros_like(&(Const, total_length, Const));
+        // let mut present_v_vec = vec![0.0; present_v.shape().num_elements()];
+        // k.copy_into(&mut present_v_vec);
+        // present_v.copy_from(&present_v_vec);
+        // past.value = present_v;
 
         past.key = k.clone();
         past.value = v.clone();
@@ -217,17 +252,38 @@ impl Attention {
         let weights = q.matmul(k) * scalar;
         let weights = weights.softmax::<Axis<2>>();
 
+        // let mut tmp = vec![0.0; weights.shape().num_elements()];
+        // weights.copy_into(&mut tmp);
+        // println!("Weights {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+
         // Get new tokens
         let tokens: Tensor<Weights, f32, Dev> = weights.try_matmul(v).unwrap();
-        let tokens = tokens.permute::<PreSplitHead, _>();
-        // TODO XXX: For some reason this fails.
-        // let tokens = tokens.reshape::<HiddenShape>();
-        let mut tokens2: Tensor<HiddenShape, f32, Dev> = dev.zeros_like(&(sequence_length, Const));
+
+        // let mut tmp = vec![0.0; tokens.shape().num_elements()];
+        // tokens.copy_into(&mut tmp);
+        // println!("post value {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
 
         let mut tokens_vec = vec![0.0; tokens.shape().num_elements()];
-        tokens.copy_into(&mut tokens_vec);
-        tokens2.copy_from(&tokens_vec);
+        let mut new_out = vec![0.0; tokens.shape().num_elements()];
 
+        tokens.copy_into(&mut tokens_vec);
+        (0..num_heads).for_each(|i| {
+            (0..sequence_length.size()).for_each(|j| {
+                (0..head_dim).for_each(|k| {
+                    let in_index = i * sequence_length.size() * head_dim + j * head_dim + k;
+                    let out_index = j * hidden_dim + i * head_dim + k;
+                    new_out[out_index] = tokens_vec[in_index];
+                });
+            });
+        });
+        let mut tokens2: Tensor<HiddenShape, f32, Dev> = dev.zeros_like(&(sequence_length, Const));
+        tokens2.copy_from(&new_out);
+
+        // println!(
+        //     "tokens vec {:?} {:?}",
+        //     &tokens_vec[..5],
+        //     &tokens_vec[tokens_vec.len() - 5..]
+        // );
         self.c_proj.forward(tokens2)
     }
 }
@@ -241,12 +297,7 @@ pub struct Gpt2Layer {
 }
 
 impl Gpt2Layer {
-    fn from_tensors(
-        index: usize,
-        tensors: &SafeTensors,
-        num_heads: usize,
-    ) -> Result<Self, SafeTensorError> {
-        let dev: Dev = Default::default();
+    fn from_tensors(index: usize, tensors: &SafeTensors) -> Result<Self, SafeTensorError> {
         let ln_1 = layer_norm_from(
             tensors.tensor(&format!("h.{index}.ln_1.weight"))?,
             tensors.tensor(&format!("h.{index}.ln_1.bias"))?,
@@ -256,7 +307,7 @@ impl Gpt2Layer {
             tensors.tensor(&format!("h.{index}.ln_2.bias"))?,
         );
         let mlp = Mlp::from_tensors(index, tensors)?;
-        let attention = Attention::from_tensors(index, tensors, num_heads)?;
+        let attention = Attention::from_tensors(index, tensors)?;
         Ok(Self {
             ln_1,
             ln_2,
@@ -289,9 +340,7 @@ pub struct Gpt2Model {
 impl Gpt2Model {
     fn from_tensors(tensors: &SafeTensors) -> Result<Self, SafeTensorError> {
         let layers: Result<Vec<_>, _> = (0..NUM_LAYERS)
-            .map(|i| -> Result<Gpt2Layer, SafeTensorError> {
-                Gpt2Layer::from_tensors(i, tensors, NUM_HEADS)
-            })
+            .map(|i| -> Result<Gpt2Layer, SafeTensorError> { Gpt2Layer::from_tensors(i, tensors) })
             .collect();
         let layers = layers?;
         Ok(Self { layers })
@@ -312,7 +361,7 @@ impl Gpt2Model {
 #[derive(Clone)]
 pub struct Gpt2 {
     wte: Embedding<VOCAB_SIZE, HIDDEN_DIM, Dev>,
-    wpe: Embedding<VOCAB_SIZE, HIDDEN_DIM, Dev>,
+    wpe: Embedding<MAX_POSITIONS, HIDDEN_DIM, Dev>,
     h: Gpt2Model,
     ln_f: LayerNorm1D<HIDDEN_DIM, Dev>,
     lm_head: UnbiasedLinear<HIDDEN_DIM, VOCAB_SIZE, Dev>,
@@ -321,12 +370,14 @@ pub struct Gpt2 {
 impl Gpt2 {
     pub fn from_tensors<'a>(tensors: &SafeTensors<'a>, num_heads: usize) -> Self {
         assert_eq!(num_heads, NUM_HEADS);
-        let dev: Dev = Default::default();
-        let wte = BuildModule::build(&dev);
-        let wpe = BuildModule::build(&dev);
+        let wte = embedding_from(tensors.tensor(&format!("wte.weight")).unwrap());
+        let wpe = embedding_from(tensors.tensor(&format!("wpe.weight")).unwrap());
         let h = Gpt2Model::from_tensors(tensors).unwrap();
-        let ln_f = BuildModule::build(&dev);
-        let lm_head = BuildModule::build(&dev);
+        let ln_f = layer_norm_from(
+            tensors.tensor("ln_f.weight").unwrap(),
+            tensors.tensor("ln_f.bias").unwrap(),
+        );
+        let lm_head = unbiased_linear_from(tensors.tensor("wte.weight").unwrap());
         Self {
             wte,
             wpe,
@@ -343,7 +394,7 @@ impl Gpt2 {
     pub fn forward(&self, ids: &[u32], past: &mut PastKeyValues) -> usize {
         let dev: Dev = Default::default();
         let n = ids.len();
-        let past_sequence_length = past[0].key.shape().1.size();
+        let past_sequence_length = past[0].key.shape().2.size();
         let ids: Vec<usize> = ids.iter().map(|id| *id as usize).collect();
         let positions: Vec<usize> = (0..ids.len()).map(|i| (i + past_sequence_length)).collect();
 
@@ -355,8 +406,22 @@ impl Gpt2 {
         position_ids.copy_from(&positions);
 
         let input_embeds = self.wte.forward(input_ids);
+        // let mut embeds_vec = vec![0.0; input_embeds.shape().num_elements()];
+        // input_embeds.copy_into(&mut embeds_vec);
+        // println!(
+        //     "embeds {:?} {:?}",
+        //     &embeds_vec[..5],
+        //     &embeds_vec[embeds_vec.len() - 5..]
+        // );
         let position_embeds = self.wpe.forward(position_ids);
         let embeds = input_embeds + position_embeds;
+        // let mut embeds_vec = vec![0.0; embeds.shape().num_elements()];
+        // embeds.copy_into(&mut embeds_vec);
+        // println!(
+        //     "embeds {:?} {:?}",
+        //     &embeds_vec[..5],
+        //     &embeds_vec[embeds_vec.len() - 5..]
+        // );
         let x = self.h.forward(embeds, past);
         let x = self.ln_f.forward(x);
         let y = self.lm_head.forward(x);

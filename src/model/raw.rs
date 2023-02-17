@@ -72,6 +72,10 @@ impl<'a> Attention<'a> {
         let hidden_dim = hidden_states.shape()[1];
         self.c_attn.forward(hidden_states);
         let qkv = hidden_states;
+
+        // let tmp = qkv.data();
+        // println!("qkv {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+
         let num_heads = self.num_heads;
         assert_eq!(hidden_dim % num_heads, 0);
         let head_dim = hidden_dim / num_heads;
@@ -315,6 +319,11 @@ impl<'a> Gpt2<'a> {
             .collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
         add(&position_embeddings, &mut tensor);
+        // println!(
+        //     "embeds {:?} {:?}",
+        //     &tensor.data()[..5],
+        //     &tensor.data()[tensor.data().len() - 5..]
+        // );
         self.h.forward(&mut tensor, past);
         self.ln_f.forward(&mut tensor);
         self.lm_head.forward(&mut tensor);
