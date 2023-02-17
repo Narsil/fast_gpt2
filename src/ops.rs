@@ -355,6 +355,12 @@ pub fn attention<T: Tensor, TM: TensorMut>(
 
     let (query, key, value) = split_qkv(qkv, past);
 
+    println!(
+        "Q vec {:?} {:?}",
+        &query.data()[..5],
+        &query.data()[query.data().len() - 5..]
+    );
+
     matmul_t(&query, &key, qk);
     let head_dim = hidden_dim / num_heads;
     let scale = (head_dim as f32).sqrt();

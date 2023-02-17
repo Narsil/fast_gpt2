@@ -54,25 +54,28 @@ impl<'data> ViewTensor<'data> {
     }
 }
 
+pub fn to_f32<'data>(view: &TensorView<'data>) -> &'data [f32] {
+    assert_eq!(view.dtype(), Dtype::F32);
+    let v = view.data();
+    let data: &[f32] = if (v.as_ptr() as usize) % 4 == 0 {
+        // SAFETY This is safe because we just checked that this
+        // was correctly aligned.
+        unsafe { std::slice::from_raw_parts(v.as_ptr() as *const f32, v.len() / 4) }
+    } else {
+        let mut c = Vec::with_capacity(v.len() / 4);
+        let mut i = 0;
+        while i < v.len() {
+            c.push(f32::from_le_bytes([v[i], v[i + 1], v[i + 2], v[i + 3]]));
+            i += 4;
+        }
+        let c: &'static Vec<f32> = Box::leak(Box::new(c));
+        c
+    };
+    data
+}
 impl<'data> From<TensorView<'data>> for ViewTensor<'data> {
     fn from(view: TensorView<'data>) -> Self {
-        assert_eq!(view.dtype(), Dtype::F32);
-        let v = view.data();
-        let data: &[f32] = if (v.as_ptr() as usize) % 4 == 0 {
-            // SAFETY This is safe because we just checked that this
-            // was correctly aligned.
-            unsafe { std::slice::from_raw_parts(v.as_ptr() as *const f32, v.len() / 4) }
-        } else {
-            let mut c = Vec::with_capacity(v.len() / 4);
-            let mut i = 0;
-            while i < v.len() {
-                c.push(f32::from_le_bytes([v[i], v[i + 1], v[i + 2], v[i + 3]]));
-                i += 4;
-            }
-            let c: &'static Vec<f32> = Box::leak(Box::new(c));
-            c
-        };
-
+        let data = to_f32(&view);
         Self::new(data, view.shape().to_vec())
     }
 }
