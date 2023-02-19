@@ -35,24 +35,25 @@ pub enum Gpt2Error {
 
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
-    let filename = "model.safetensors";
+    let model_id = std::env::var("model_id").unwrap_or("gpt2".to_string());
+    let filename = format!("model-{model_id}.safetensors");
     let max_files = 100;
     let chunk_size = 10_000_000;
-    if !std::path::Path::new(filename).exists() {
-        let url = "https://huggingface.co/gpt2/resolve/main/model.safetensors";
+    if !std::path::Path::new(&filename).exists() {
+        let url = format!("https://huggingface.co/{model_id}/resolve/main/model.safetensors");
         println!("Downloading {url:?} into {filename:?}");
-        download(url, filename, max_files, chunk_size).await?;
+        download(&url, &filename, max_files, chunk_size).await?;
     }
     let file = File::open(filename)?;
     let buffer = unsafe { MmapOptions::new().map(&file)? };
     let tensors = SafeTensors::deserialize(&buffer)?;
     println!("Safetensors {:?}", start.elapsed());
 
-    let filename = "tokenizer.json";
-    if !std::path::Path::new(filename).exists() {
-        let url = "https://huggingface.co/gpt2/resolve/main/tokenizer.json";
+    let filename = format!("tokenizer-{model_id}.json");
+    if !std::path::Path::new(&filename).exists() {
+        let url = format!("https://huggingface.co/{model_id}/resolve/main/tokenizer.json");
         println!("Downloading {url:?} into {filename:?}");
-        download(url, filename, max_files, chunk_size).await?;
+        download(&url, &filename, max_files, chunk_size).await?;
     }
     let tokenizer = Tokenizer::from_file(filename).unwrap();
     println!("Tokenizer {:?}", start.elapsed());
@@ -84,6 +85,8 @@ pub async fn run() -> Result<(), Gpt2Error> {
         let new_id = gpt2.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
         current_ids = vec![new_id as u32];
+        #[cfg(feature = "dfdx")]
+        dev.synchronize().unwrap();
         println!("Loop in {:?}", start.elapsed());
     }
     println!("Result {:?}", tokenizer.decode(ids, false));
