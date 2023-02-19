@@ -35,7 +35,7 @@ pub enum Gpt2Error {
 
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
-    let model_id = std::env::var("model_id").unwrap_or("gpt2".to_string());
+    let model_id = std::env::var("MODEL_ID").unwrap_or("gpt2".to_string());
     let filename = format!("model-{model_id}.safetensors");
     let max_files = 100;
     let chunk_size = 10_000_000;
@@ -60,14 +60,14 @@ pub async fn run() -> Result<(), Gpt2Error> {
 
     #[cfg(feature = "dfdx")]
     let dev: Dev = Default::default();
-    let num_heads = 12;
+    let num_heads = 16;
 
     #[cfg(feature = "dfdx")]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads, &dev);
     #[cfg(not(feature = "dfdx"))]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads);
 
-    let string = "My name is";
+    let string = "My name was";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());

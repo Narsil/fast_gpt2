@@ -19,10 +19,10 @@ pub type Dev = Cpu;
 use dfdx::prelude::Cuda;
 #[cfg(feature = "cuda")]
 pub type Dev = Cuda;
-const HIDDEN_DIM: usize = 768;
-const NUM_HEADS: usize = 12;
+const HIDDEN_DIM: usize = 1024;
+const NUM_HEADS: usize = 16;
 const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
-const NUM_LAYERS: usize = 12;
+const NUM_LAYERS: usize = 24;
 const VOCAB_SIZE: usize = 50257;
 const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;
