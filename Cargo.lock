@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "cudarc"
-version = "0.6.1"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb52202b5882cb796d6a960c16b8fb84380106d464025f6e3d46d08d3e9e7611"
+checksum = "bbd79bcf9bceacaf6c2610a9c0832d1ef9bb6a2b617f608ad0718d799793c299"
 dependencies = [
  "find_cuda_helper",
  "no-std-compat",
@@ -274,7 +274,6 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
-source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#7c059ab55e24fce59d6815bb346bb0bf0636904c"
 dependencies = [
  "cblas-sys",
  "cudarc",
@@ -282,6 +281,7 @@ dependencies = [
  "libc",
  "matrixmultiply",
  "no-std-compat",
+ "num-traits",
  "rand",
  "rand_distr",
  "rustc_version",

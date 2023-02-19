@@ -27,7 +27,6 @@ const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;
 const PAST: char = 'P';
 const SEQ: char = 'S';
-// TODO use something different without figthing compiler too much
 const PAST_PLUS_SEQ: char = 'T';
 type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 
@@ -49,12 +48,6 @@ impl PastKeyValue {
 }
 
 pub type PastKeyValues = Vec<PastKeyValue>;
-
-#[derive(Clone)]
-pub struct Mlp {
-    c_fc: Linear<HIDDEN_DIM, FF_DIM, Dev>,
-    c_proj: Linear<FF_DIM, HIDDEN_DIM, Dev>,
-}
 
 fn linear_from<const I: usize, const O: usize, D: Device<f32>>(
     weight: TensorView,
@@ -99,6 +92,12 @@ fn embedding_from<const I: usize, const O: usize, D: Device<f32>>(
     embedding
 }
 
+#[derive(Clone)]
+pub struct Mlp {
+    c_fc: Linear<HIDDEN_DIM, FF_DIM, Dev>,
+    c_proj: Linear<FF_DIM, HIDDEN_DIM, Dev>,
+}
+
 impl Mlp {
     fn from_tensors(index: usize, tensors: &SafeTensors) -> Result<Self, SafeTensorError> {
         let c_fc = linear_from(
@@ -115,7 +114,17 @@ impl Mlp {
     fn forward(&self, tensor: Tensor<HiddenShape, f32, Dev>) -> Tensor<HiddenShape, f32, Dev> {
         let tensor = self.c_fc.forward(tensor);
         let tensor = tensor.gelu();
-        self.c_proj.forward(tensor)
+        let mut tmp = vec![0.0; tensor.shape().num_elements()];
+        tensor.copy_into(&mut tmp);
+        println!("After gelu {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        // println!("Before c_proj");
+        // println!("----------");
+        let tensor = self.c_proj.forward(tensor);
+        // println!("After c_proj");
+        let mut tmp = vec![0.0; tensor.shape().num_elements()];
+        tensor.copy_into(&mut tmp);
+        println!("After mlp {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        tensor
     }
 }
 
@@ -147,6 +156,12 @@ impl Attention {
         type SplitKeys = (Const<NUM_HEADS>, Const<HEAD_DIM>, Dyn<PAST_PLUS_SEQ>);
         type SplitValues = (Const<NUM_HEADS>, Dyn<PAST_PLUS_SEQ>, Const<HEAD_DIM>);
         type Weights = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
+
+        // if past.value.shape().num_elements() > 0 {
+        //     let mut tmp = vec![0.0; past.value.shape().num_elements()];
+        //     past.value.copy_into(&mut tmp);
+        //     println!("Past value {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        // }
 
         let sequence_length = hidden_states.shape().0;
         let past_sequence_length = past.key.shape().2;

@@ -30,7 +30,11 @@ impl<'a> Mlp<'a> {
     fn forward(&self, tensor: &mut OwnedTensor) {
         self.c_fc.forward(tensor);
         gelu(tensor);
+        let tmp = tensor.data();
+        println!("After gelu {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
         self.c_proj.forward(tensor);
+        let tmp = tensor.data();
+        println!("After MLP {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
     }
 }
 
