@@ -10,6 +10,9 @@ use std::fs::File;
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
+#[cfg(feature = "dfdx")]
+use crate::model::dfdx::Dev;
+
 #[derive(Debug, Error)]
 pub enum Gpt2Error {
     #[error("i/o error")]
@@ -54,14 +57,26 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let tokenizer = Tokenizer::from_file(filename).unwrap();
     println!("Tokenizer {:?}", start.elapsed());
 
+    #[cfg(feature = "dfdx")]
+    let dev: Dev = Default::default();
     let num_heads = 12;
+
+    #[cfg(feature = "dfdx")]
+    let gpt2 = Gpt2::from_tensors(&tensors, num_heads, &dev);
+    #[cfg(not(feature = "dfdx"))]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads);
+
     let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
     let mut ids = encoded.get_ids().to_vec();
+
+    #[cfg(feature = "dfdx")]
+    let mut past_key_values = gpt2.empty_past_key_values(&dev);
+    #[cfg(not(feature = "dfdx"))]
     let mut past_key_values = gpt2.empty_past_key_values();
+
     let mut current_ids = ids.clone();
     for _i in 0..10 {
         // println!("-------------");

@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
-source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#f5ab34e038e2646ecbcb3417eac7103f982efa8b"
+source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#c235a480d92c7a40ed1dfd403603488b3848b1a5"
 dependencies = [
  "cblas-sys",
  "cudarc",
@@ -319,6 +319,7 @@ dependencies = [
  "dfdx",
  "futures",
  "futures-util",
+ "lazy_static",
  "libc",
  "matrixmultiply",
  "memmap2",

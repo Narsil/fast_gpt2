@@ -381,9 +381,7 @@ pub fn attention<T: Tensor, TM: TensorMut>(
     let scale = (head_dim as f32).sqrt();
     qk.data_mut().iter_mut().for_each(|v| *v /= scale);
 
-    // causal_softmax(qk, max, past_sequence_length);
-    // // TODO
-    softmax(qk, max);
+    causal_softmax(qk, max, past_sequence_length);
     // let tmp = qk.data();
     // println!("weights {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
     matmul(qk, &value, out);
