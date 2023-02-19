@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
-source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#c235a480d92c7a40ed1dfd403603488b3848b1a5"
+source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#c81654fec198d5063ae8d4bf61e8b8578d0b1575"
 dependencies = [
  "cblas-sys",
  "cudarc",

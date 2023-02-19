@@ -19,10 +19,29 @@ pub type Dev = Cpu;
 use dfdx::prelude::Cuda;
 #[cfg(feature = "cuda")]
 pub type Dev = Cuda;
+
+#[cfg(feature = "gpt2")]
+const HIDDEN_DIM: usize = 768;
+#[cfg(feature = "gpt2")]
+const NUM_HEADS: usize = 12;
+#[cfg(feature = "gpt2")]
+const NUM_LAYERS: usize = 12;
+
+#[cfg(feature = "gpt2-medium")]
 const HIDDEN_DIM: usize = 1024;
+#[cfg(feature = "gpt2-medium")]
 const NUM_HEADS: usize = 16;
-const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
+#[cfg(feature = "gpt2-medium")]
 const NUM_LAYERS: usize = 24;
+
+#[cfg(feature = "gpt2-large")]
+const HIDDEN_DIM: usize = 1280;
+#[cfg(feature = "gpt2-large")]
+const NUM_HEADS: usize = 20;
+#[cfg(feature = "gpt2-large")]
+const NUM_LAYERS: usize = 36;
+
+const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
 const VOCAB_SIZE: usize = 50257;
 const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;

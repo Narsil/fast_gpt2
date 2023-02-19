@@ -13,7 +13,7 @@ from transformers import pipeline
 print(f"Loaded transformers {datetime.datetime.now() - start}")
 
 
-pipe = pipeline(task="text-generation", model="gpt2-medium", do_sample=False, device=0, revision="refs/pr/3")
+pipe = pipeline(task="text-generation", model="gpt2", do_sample=False, device=0)
 pipe.model.config.max_length = None
 print(f"Loaded in {datetime.datetime.now() - start}")
 inf_start = datetime.datetime.now()

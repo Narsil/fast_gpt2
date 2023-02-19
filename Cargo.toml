@@ -32,10 +32,14 @@ lazy_static = "1.4.0"
 # dfdx = { path = "../dfdx", optional= true, default-features=false, features=["safetensors"] }
 
 [features]
+default = ["gpt2"]
 cblas = ["dep:cblas-sys", "dep:libc"]
 intel-mkl = ["cblas"]
 dfdx_intel = ["dfdx/intel-mkl"]
 cuda = ["dfdx/cuda"]
+gpt2 = []
+gpt2-medium = []
+gpt2-large = []
 
 [profile.release]
 lto = true

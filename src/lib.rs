@@ -35,12 +35,26 @@ pub enum Gpt2Error {
 
 pub async fn run() -> Result<(), Gpt2Error> {
     let start = std::time::Instant::now();
-    let model_id = std::env::var("MODEL_ID").unwrap_or("gpt2".to_string());
+
+    #[cfg(feature = "gpt2")]
+    let model_id = "gpt2";
+    #[cfg(feature = "gpt2-medium")]
+    let model_id = "gpt2-medium";
+    #[cfg(feature = "gpt2-large")]
+    let model_id = "gpt2-large";
+
     let filename = format!("model-{model_id}.safetensors");
     let max_files = 100;
     let chunk_size = 10_000_000;
     if !std::path::Path::new(&filename).exists() {
-        let url = format!("https://huggingface.co/{model_id}/resolve/main/model.safetensors");
+        #[cfg(feature = "gpt2")]
+        let revision = "main";
+        #[cfg(feature = "gpt2-medium")]
+        let revision = "refs%2Fpr%2F3";
+        #[cfg(feature = "gpt2-large")]
+        let revision = "refs%2Fpr%2F3";
+
+        let url = format!("https://huggingface.co/{model_id}/resolve/{revision}/model.safetensors");
         println!("Downloading {url:?} into {filename:?}");
         download(&url, &filename, max_files, chunk_size).await?;
     }
@@ -60,7 +74,13 @@ pub async fn run() -> Result<(), Gpt2Error> {
 
     #[cfg(feature = "dfdx")]
     let dev: Dev = Default::default();
-    let num_heads = 16;
+
+    #[cfg(feature = "gpt2")]
+    let num_heads = 12;
+    #[cfg(feature = "gpt2-medium")]
+    let num_heads = 24;
+    #[cfg(feature = "gpt2-large")]
+    let num_heads = 36;
 
     #[cfg(feature = "dfdx")]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads, &dev);
@@ -85,7 +105,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
         let new_id = gpt2.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
         current_ids = vec![new_id as u32];
-        #[cfg(feature = "dfdx")]
+        #[cfg(feature = "dfdx,cuda")]
         dev.synchronize().unwrap();
         println!("Loop in {:?}", start.elapsed());
     }
