@@ -33,8 +33,8 @@ impl<'a> Mlp<'a> {
         let tmp = tensor.data();
         println!("After gelu {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
         self.c_proj.forward(tensor);
-        let tmp = tensor.data();
-        println!("After MLP {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        // let tmp = tensor.data();
+        // println!("After MLP {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
     }
 }
 

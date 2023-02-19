@@ -1,11 +1,14 @@
 use crate::tensor::to_f32;
-use dfdx::nn::{Linear, Module, UnbiasedLinear};
+use dfdx::nn::{
+    modules::{Embedding, LayerNorm1D, Linear, UnbiasedLinear},
+    Module,
+};
 use dfdx::prelude::{
-    Axis, BuildModule, Const, Device, Embedding, LayerNorm1D, Rank2, Shape, Tensor, TensorFrom,
-    ZerosTensor,
+    Axis, BuildModule, Const, Device, Rank2, Shape, Tensor, TensorFrom, ZerosTensor,
 };
 use dfdx::shapes::{Dim, Dyn, HasShape};
 use dfdx::tensor::AsArray;
+use dfdx::tensor_ops::BroadcastTo;
 use dfdx::tensor_ops::{GatherTo, PermuteTo, TryMatMul};
 use safetensors::tensor::{SafeTensorError, SafeTensors, TensorView};
 
@@ -52,9 +55,9 @@ pub type PastKeyValues = Vec<PastKeyValue>;
 fn linear_from<const I: usize, const O: usize, D: Device<f32>>(
     weight: TensorView,
     bias: TensorView,
-) -> Linear<I, O, D> {
+) -> Linear<I, O, f32, D> {
     let dev: D = Default::default();
-    let mut linear: Linear<I, O, D> = BuildModule::build(&dev);
+    let mut linear: Linear<I, O, f32, D> = BuildModule::build(&dev);
     let mut weight_tensor: Tensor<(Const<I>, Const<O>), f32, D> = dev.zeros_like(&(Const, Const));
     weight_tensor.copy_from(to_f32(&weight));
     let weight_t: Tensor<(Const<O>, Const<I>), f32, D> = weight_tensor.permute();
@@ -65,9 +68,9 @@ fn linear_from<const I: usize, const O: usize, D: Device<f32>>(
 
 fn unbiased_linear_from<const I: usize, const O: usize, D: Device<f32>>(
     weight: TensorView,
-) -> UnbiasedLinear<I, O, D> {
+) -> UnbiasedLinear<I, O, f32, D> {
     let dev: D = Default::default();
-    let mut unbiased_linear: UnbiasedLinear<I, O, D> = BuildModule::build(&dev);
+    let mut unbiased_linear: UnbiasedLinear<I, O, f32, D> = BuildModule::build(&dev);
     unbiased_linear.weight.copy_from(to_f32(&weight));
     unbiased_linear
 }
@@ -75,9 +78,9 @@ fn unbiased_linear_from<const I: usize, const O: usize, D: Device<f32>>(
 fn layer_norm_from<const M: usize, D: Device<f32>>(
     weight: TensorView,
     bias: TensorView,
-) -> LayerNorm1D<M, D> {
+) -> LayerNorm1D<M, f32, D> {
     let dev: D = Default::default();
-    let mut layer_norm: LayerNorm1D<M, D> = BuildModule::build(&dev);
+    let mut layer_norm: LayerNorm1D<M, f32, D> = BuildModule::build(&dev);
     layer_norm.gamma.copy_from(to_f32(&weight));
     layer_norm.beta.copy_from(to_f32(&bias));
     layer_norm
@@ -85,17 +88,17 @@ fn layer_norm_from<const M: usize, D: Device<f32>>(
 
 fn embedding_from<const I: usize, const O: usize, D: Device<f32>>(
     weight: TensorView,
-) -> Embedding<I, O, D> {
+) -> Embedding<I, O, f32, D> {
     let dev: D = Default::default();
-    let mut embedding: Embedding<I, O, D> = BuildModule::build(&dev);
+    let mut embedding: Embedding<I, O, f32, D> = BuildModule::build(&dev);
     embedding.weight.copy_from(to_f32(&weight));
     embedding
 }
 
 #[derive(Clone)]
 pub struct Mlp {
-    c_fc: Linear<HIDDEN_DIM, FF_DIM, Dev>,
-    c_proj: Linear<FF_DIM, HIDDEN_DIM, Dev>,
+    c_fc: Linear<HIDDEN_DIM, FF_DIM, f32, Dev>,
+    c_proj: Linear<FF_DIM, HIDDEN_DIM, f32, Dev>,
 }
 
 impl Mlp {
@@ -114,24 +117,46 @@ impl Mlp {
     fn forward(&self, tensor: Tensor<HiddenShape, f32, Dev>) -> Tensor<HiddenShape, f32, Dev> {
         let tensor = self.c_fc.forward(tensor);
         let tensor = tensor.gelu();
-        let mut tmp = vec![0.0; tensor.shape().num_elements()];
-        tensor.copy_into(&mut tmp);
-        println!("After gelu {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        // println!("===");
+        // let mut tmp = vec![0.0; tensor.shape().num_elements()];
+        // tensor.copy_into(&mut tmp);
+        // println!("After gelu {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
         // println!("Before c_proj");
-        // println!("----------");
-        let tensor = self.c_proj.forward(tensor);
-        // println!("After c_proj");
-        let mut tmp = vec![0.0; tensor.shape().num_elements()];
-        tensor.copy_into(&mut tmp);
-        println!("After mlp {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+        let tensor = if false {
+            // let mut tmp = vec![0.0; self.c_proj.weight.shape().num_elements()];
+            // self.c_proj.weight.copy_into(&mut tmp);
+            // println!("c_proj.weight {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+            // let mut tmp = vec![0.0; self.c_proj.bias.shape().num_elements()];
+            // self.c_proj.bias.copy_into(&mut tmp);
+            // println!("c_proj.bias {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+
+            let tensor = tensor.matmul(self.c_proj.weight.clone().permute());
+            // let mut tmp = vec![0.0; tensor.shape().num_elements()];
+            // tensor.copy_into(&mut tmp);
+            // println!("After matmul {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+            let shape = tensor.shape();
+            let tensor = tensor.clone() + self.c_proj.bias.clone().broadcast_like(shape);
+            let dev: Dev = Default::default();
+            dev.synchronize().unwrap();
+            // let mut tmp = vec![0.0; tensor.shape().num_elements()];
+            // tensor.copy_into(&mut tmp);
+            // println!("After bias {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+            tensor
+        } else {
+            let tensor = self.c_proj.forward(tensor);
+            // let mut tmp = vec![0.0; tensor.shape().num_elements()];
+            // tensor.copy_into(&mut tmp);
+            // println!("After mlp {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
+            tensor
+        };
         tensor
     }
 }
 
 #[derive(Clone)]
 pub struct Attention {
-    c_attn: Linear<HIDDEN_DIM, { 3 * HIDDEN_DIM }, Dev>,
-    c_proj: Linear<HIDDEN_DIM, HIDDEN_DIM, Dev>,
+    c_attn: Linear<HIDDEN_DIM, { 3 * HIDDEN_DIM }, f32, Dev>,
+    c_proj: Linear<HIDDEN_DIM, HIDDEN_DIM, f32, Dev>,
 }
 
 impl Attention {
@@ -176,6 +201,7 @@ impl Attention {
 
         let mut qkv_vec = vec![0.0; qkv.shape().num_elements()];
         qkv.copy_into(&mut qkv_vec);
+        dev.synchronize().unwrap();
 
         let mut q: Tensor<SplitQuery, f32, Dev> = dev.zeros_like(&(Const, sequence_length, Const));
 
@@ -188,6 +214,7 @@ impl Attention {
         let mut past_value_vec = vec![0.0; past.value.shape().num_elements()];
         past.key.copy_into(&mut past_key_vec);
         past.value.copy_into(&mut past_value_vec);
+        dev.synchronize().unwrap();
 
         let head_dim = HEAD_DIM;
         let hidden_dim = HIDDEN_DIM;
@@ -241,6 +268,9 @@ impl Attention {
         k.copy_from(&k_vec);
         v.copy_from(&v_vec);
 
+        let dev: Dev = Default::default();
+        dev.synchronize().unwrap();
+
         // println!("Q vec {:?} {:?}", &q_vec[..5], &q_vec[q_vec.len() - 5..]);
         // println!("K vec {:?} {:?}", &k_vec[..5], &k_vec[k_vec.len() - 5..]);
         // println!("V vec {:?} {:?}", &v_vec[..5], &v_vec[v_vec.len() - 5..]);
@@ -259,6 +289,7 @@ impl Attention {
         v.copy_into(&mut present_v_vec);
         present_v.copy_from(&present_v_vec);
         past.value = present_v;
+        dev.synchronize().unwrap();
 
         // past.key = k.clone();
         // past.value = v.clone();
@@ -294,6 +325,7 @@ impl Attention {
         });
         let mut tokens2: Tensor<HiddenShape, f32, Dev> = dev.zeros_like(&(sequence_length, Const));
         tokens2.copy_from(&new_out);
+        dev.synchronize().unwrap();
 
         // println!(
         //     "tokens vec {:?} {:?}",
@@ -306,8 +338,8 @@ impl Attention {
 
 #[derive(Clone)]
 pub struct Gpt2Layer {
-    ln_1: LayerNorm1D<HIDDEN_DIM, Dev>,
-    ln_2: LayerNorm1D<HIDDEN_DIM, Dev>,
+    ln_1: LayerNorm1D<HIDDEN_DIM, f32, Dev>,
+    ln_2: LayerNorm1D<HIDDEN_DIM, f32, Dev>,
     mlp: Mlp,
     attention: Attention,
 }
@@ -376,11 +408,11 @@ impl Gpt2Model {
 
 #[derive(Clone)]
 pub struct Gpt2 {
-    wte: Embedding<VOCAB_SIZE, HIDDEN_DIM, Dev>,
-    wpe: Embedding<MAX_POSITIONS, HIDDEN_DIM, Dev>,
+    wte: Embedding<VOCAB_SIZE, HIDDEN_DIM, f32, Dev>,
+    wpe: Embedding<MAX_POSITIONS, HIDDEN_DIM, f32, Dev>,
     h: Gpt2Model,
-    ln_f: LayerNorm1D<HIDDEN_DIM, Dev>,
-    lm_head: UnbiasedLinear<HIDDEN_DIM, VOCAB_SIZE, Dev>,
+    ln_f: LayerNorm1D<HIDDEN_DIM, f32, Dev>,
+    lm_head: UnbiasedLinear<HIDDEN_DIM, VOCAB_SIZE, f32, Dev>,
 }
 
 impl Gpt2 {

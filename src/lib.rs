@@ -63,8 +63,8 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let mut ids = encoded.get_ids().to_vec();
     let mut past_key_values = gpt2.empty_past_key_values();
     let mut current_ids = ids.clone();
-    for _i in 0..2 {
-        println!("-------------");
+    for _i in 0..10 {
+        // println!("-------------");
         let start = std::time::Instant::now();
         let new_id = gpt2.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
