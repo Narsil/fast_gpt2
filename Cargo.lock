@@ -195,12 +195,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "crunchy"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
+
+[[package]]
 name = "cudarc"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd79bcf9bceacaf6c2610a9c0832d1ef9bb6a2b617f608ad0718d799793c299"
 dependencies = [
  "find_cuda_helper",
+ "no-std-compat",
+ "spin",
+]
+
+[[package]]
+name = "cudarc"
+version = "0.7.2"
+dependencies = [
+ "find_cuda_helper",
+ "half",
  "no-std-compat",
  "spin",
 ]
@@ -277,7 +293,7 @@ version = "0.10.0"
 source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#c81654fec198d5063ae8d4bf61e8b8578d0b1575"
 dependencies = [
  "cblas-sys",
- "cudarc",
+ "cudarc 0.7.1",
  "glob",
  "libc",
  "matrixmultiply",
@@ -316,6 +332,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "cblas-sys",
+ "cudarc 0.7.2",
  "dfdx",
  "futures",
  "futures-util",
@@ -506,6 +523,15 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "half"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02b4af3693f1b705df946e9fe5631932443781d0aabb423b62fcd4d73f6d2fd0"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]

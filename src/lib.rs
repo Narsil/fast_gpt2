@@ -4,6 +4,7 @@ pub mod ops;
 pub mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
+use cudarc::driver::{profiler_start, profiler_stop};
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
 use std::fs::File;
@@ -31,6 +32,8 @@ pub enum Gpt2Error {
     AcquireError(#[from] tokio::sync::AcquireError),
     #[error("No content length")]
     NoContentLength,
+    #[error("Driver error")]
+    ProfilerError(#[from] cudarc::driver::DriverError),
 }
 
 pub async fn run() -> Result<(), Gpt2Error> {
@@ -99,16 +102,18 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let mut past_key_values = gpt2.empty_past_key_values();
 
     let mut current_ids = ids.clone();
+    profiler_start()?;
     for _i in 0..10 {
         // println!("-------------");
         let start = std::time::Instant::now();
         let new_id = gpt2.forward(&current_ids, &mut past_key_values);
         ids.push(new_id as u32);
         current_ids = vec![new_id as u32];
-        #[cfg(feature = "dfdx,cuda")]
-        dev.synchronize().unwrap();
+        // #[cfg(feature = "dfdx,cuda")]
+        // dev.synchronize().unwrap();
         println!("Loop in {:?}", start.elapsed());
     }
+    profiler_stop()?;
     println!("Result {:?}", tokenizer.decode(ids, false));
     println!("Total Inference {:?}", start.elapsed());
     Ok(())

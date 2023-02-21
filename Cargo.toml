@@ -30,6 +30,7 @@ serde_json = "1.0.91"
 dfdx = { git = "https://github.com/Narsil/dfdx", branch="fast_gpt2", optional= true, default-features=false, features=["safetensors"] }
 lazy_static = "1.4.0"
 # dfdx = { path = "../dfdx", optional= true, default-features=false, features=["safetensors"] }
+cudarc = { path = "../cudarc" }
 
 [features]
 default = ["gpt2"]
