@@ -202,11 +202,10 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "cudarc"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd79bcf9bceacaf6c2610a9c0832d1ef9bb6a2b617f608ad0718d799793c299"
+version = "0.7.2"
 dependencies = [
  "find_cuda_helper",
+ "half",
  "no-std-compat",
  "spin",
 ]
@@ -214,9 +213,10 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c1ae64bcad036bf26ca02c12da142f2a1159ad09cb9a1c6ab3d182ccf6f6a16"
 dependencies = [
  "find_cuda_helper",
- "half",
  "no-std-compat",
  "spin",
 ]
@@ -292,7 +292,7 @@ name = "dfdx"
 version = "0.10.0"
 dependencies = [
  "cblas-sys",
- "cudarc 0.7.1",
+ "cudarc 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "glob",
  "libc",
  "matrixmultiply",
@@ -778,9 +778,9 @@ checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
 name = "memmap2"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af2c65375e552a67fe3829ca63e8a7c27a378a62824594f43b2851d682b5ec2"
+checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
 dependencies = [
  "libc",
 ]
@@ -1225,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "safetensors"
 version = "0.2.9"
-source = "git+https://github.com/huggingface/safetensors?branch=forcing_alignment#f5ef88d715e5a6cd1594ce36fc1b94a93bbaf85e"
+source = "git+https://github.com/huggingface/safetensors?branch=forcing_alignment#268e7f91f93d1ddfeb75f31469480b19281a7904"
 dependencies = [
  "serde",
  "serde_json",
@@ -1387,9 +1387,9 @@ checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
 name = "syn"
-version = "1.0.107"
+version = "1.0.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f4064b5b16e03ae50984a5a8ed5d4f8803e6bc1fd170a3cda91a1be4b18e3f5"
+checksum = "d56e159d99e6c2b93995d171050271edb50ecc5288fbc7cc17de8fdce4e58c14"
 dependencies = [
  "proc-macro2",
  "quote",
