@@ -90,7 +90,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     #[cfg(not(feature = "dfdx"))]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads);
 
-    let string = "My name was";
+    let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
