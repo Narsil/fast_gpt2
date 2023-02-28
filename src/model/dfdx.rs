@@ -4,8 +4,8 @@ use dfdx::nn::{
     Module,
 };
 use dfdx::prelude::{Axis, BuildModule, Const, Rank2, Shape, Tensor, TensorFrom, ZerosTensor};
-use dfdx::shapes::{Dim, Dyn, HasShape};
-use dfdx::tensor::{AsArray, AsVec};
+use dfdx::shapes::{Dim, HasShape};
+use dfdx::tensor::AsArray;
 use dfdx::tensor_ops::{GatherTo, PermuteTo, TryAttentionReshape, TryMatMul};
 use safetensors::tensor::{SafeTensorError, SafeTensors, TensorView};
 
@@ -46,17 +46,14 @@ const HEAD_DIM: usize = HIDDEN_DIM / NUM_HEADS;
 const VOCAB_SIZE: usize = 50257;
 const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;
-const PAST: char = 'P';
-const SEQ: char = 'S';
-const PRESENT: char = 'T';
-type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
-type QkvShape = (Dyn<SEQ>, Const<{ HIDDEN_DIM * 3 }>);
+type HiddenShape = (usize, Const<HIDDEN_DIM>);
+type QkvShape = (usize, Const<{ HIDDEN_DIM * 3 }>);
 type PastKeyShape = (Const<NUM_HEADS>, Const<HEAD_DIM>, usize);
 type PastValueShape = (Const<NUM_HEADS>, usize, Const<HEAD_DIM>);
-type SplitQuery = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
+type SplitQuery = (Const<NUM_HEADS>, usize, Const<HEAD_DIM>);
 type SplitKeys = (Const<NUM_HEADS>, Const<HEAD_DIM>, usize);
 type SplitValues = (Const<NUM_HEADS>, usize, Const<HEAD_DIM>);
-type Weights = (Const<NUM_HEADS>, Dyn<SEQ>, Const<HEAD_DIM>);
+type Weights = (Const<NUM_HEADS>, usize, Const<HEAD_DIM>);
 
 pub struct PastKeyValue {
     pub key: FTensor<PastKeyShape>,
@@ -65,7 +62,7 @@ pub struct PastKeyValue {
 
 impl PastKeyValue {
     pub fn new(past_sequence_length: usize, dev: &Dev) -> Self {
-        let past_sequence_length = Dyn::<PAST>(past_sequence_length);
+        let past_sequence_length = past_sequence_length;
         let key: FTensor<PastKeyShape> =
             dev.zeros_like(&(Const, Const, past_sequence_length.size()));
         let value: FTensor<PastValueShape> =
@@ -128,100 +125,11 @@ fn attention_reshape(
     FTensor<SplitKeys>,
     FTensor<SplitValues>,
 ) {
-    let dev = qkv.device().clone();
+    let dev: Dev = Default::default();
 
     let (q, k, v) = dev.attention_reshape(qkv, past_key, past_value);
 
-    // let sequence_length = qkv.shape().0;
-    // let past_sequence_length = past_key.shape().2;
-    // let total_length = sequence_length.size() + past_sequence_length.size();
-    // let mut q2: FTensor<SplitQuery> = dev.zeros_like(&(Const, sequence_length, Const));
-    // let mut k2: FTensor<SplitKeys> = dev.zeros_like(&(Const, Const, total_length));
-    // let mut v2: FTensor<SplitValues> = dev.zeros_like(&(Const, total_length, Const));
-
-    // assert_eq!(q.shape(), q2.shape());
-    // assert_eq!(k.shape(), k2.shape());
-    // assert_eq!(v.shape(), v2.shape());
-    // let mut q_vec = vec![0.0; q2.shape().num_elements()];
-    // let mut k_vec = vec![0.0; k2.shape().num_elements()];
-    // let mut v_vec = vec![0.0; v2.shape().num_elements()];
-    // let mut past_key_vec = vec![0.0; past_key.shape().num_elements()];
-    // let mut past_value_vec = vec![0.0; past_value.shape().num_elements()];
-    // let mut qkv_vec = vec![0.0; qkv.shape().num_elements()];
-    // past_key.copy_into(&mut past_key_vec);
-    // past_value.copy_into(&mut past_value_vec);
-    // qkv.copy_into(&mut qkv_vec);
-
-    // let head_dim = HEAD_DIM;
-    // let hidden_dim = HIDDEN_DIM;
-    // let num_heads = NUM_HEADS;
-    // (0..num_heads).for_each(|i| {
-    //     (0..sequence_length.size()).for_each(|j| {
-    //         (0..head_dim).for_each(|k| {
-    //             let index = j * hidden_dim * 3 + i * head_dim + k;
-    //             let out_index = i * sequence_length.size() * head_dim + j * head_dim + k;
-    //             let value = qkv_vec[index];
-    //             q_vec[out_index] = value;
-    //         });
-    //     });
-    // });
-    // (0..num_heads).for_each(|i| {
-    //     (0..past_sequence_length.size() + sequence_length.size()).for_each(|j| {
-    //         (0..head_dim).for_each(|k| {
-    //             let in_index_k =
-    //                 i * (past_sequence_length.size() + sequence_length.size()) * head_dim
-    //                     + k * (past_sequence_length.size() + sequence_length.size())
-    //                     + j;
-
-    //             let in_index_v =
-    //                 i * (past_sequence_length.size() + sequence_length.size()) * head_dim
-    //                     + j * head_dim
-    //                     + k;
-    //             if j < past_sequence_length.size() {
-    //                 let k_index = i * past_sequence_length.size() * head_dim
-    //                     + k * past_sequence_length.size()
-    //                     + j;
-    //                 let k_value = past_key_vec[k_index];
-    //                 k_vec[in_index_k] = k_value;
-
-    //                 let v_index = i * past_sequence_length.size() * head_dim + j * head_dim + k;
-    //                 let v_value = past_value_vec[v_index];
-    //                 v_vec[in_index_v] = v_value;
-    //             } else {
-    //                 let sj = j - past_sequence_length.size();
-    //                 let k_index = sj * hidden_dim * 3 + i * head_dim + hidden_dim + k;
-    //                 let k_value = qkv_vec[k_index];
-    //                 k_vec[in_index_k] = k_value;
-
-    //                 let v_index = sj * hidden_dim * 3 + i * head_dim + hidden_dim * 2 + k;
-    //                 let v_value = qkv_vec[v_index];
-    //                 v_vec[in_index_v] = v_value;
-    //             }
-    //         });
-    //     });
-    // });
-    // q2.copy_from(&q_vec);
-    // k2.copy_from(&k_vec);
-    // v2.copy_from(&v_vec);
-
-    // if past_sequence_length > 0 {
-    //     let tmp = q2.as_vec();
-    //     println!("Expected {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     let tmp = q.as_vec();
-    //     println!("Got {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     let tmp = k2.as_vec();
-    //     println!("Expected {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     let tmp = k.as_vec();
-    //     println!("Got {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     let tmp = v2.as_vec();
-    //     println!("Expected {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     let tmp = v.as_vec();
-    //     println!("Got {:?}..{:?}", &tmp[..4], &tmp[tmp.len() - 4..]);
-    //     println!("========================");
-    // }
-
     (q, k, v)
-    // (q2, k2, v2)
 }
 
 #[derive(Clone)]
@@ -305,7 +213,7 @@ impl Attention {
         // qkv.copy_into(&mut tmp);
         // println!("Qkv {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
 
-        let dev = qkv.device();
+        let dev: Dev = Default::default();
         let (q, k, v) = attention_reshape(&qkv, &past.key, &past.value);
         past.key = k.clone();
         past.value = v.clone();
@@ -320,7 +228,7 @@ impl Attention {
         // println!("Weights {:?} {:?}", &tmp[..5], &tmp[tmp.len() - 5..]);
 
         // Get new tokens
-        let tokens: FTensor<Weights> = weights.try_matmul(v).unwrap();
+        let tokens: FTensor<Weights> = weights.matmul(v);
 
         // let mut tmp = vec![0.0; tokens.shape().num_elements()];
         // tokens.copy_into(&mut tmp);
@@ -472,12 +380,11 @@ impl Gpt2 {
         let ids: Vec<usize> = ids.iter().map(|id| *id as usize).collect();
         let positions: Vec<usize> = (0..ids.len()).map(|i| (i + past_sequence_length)).collect();
 
-        let nn = Dyn::<SEQ>(n);
-        let dev = past[0].key.device().clone();
-        let mut input_ids: Tensor<(Dyn<SEQ>,), usize, Dev> = dev.zeros_like(&(nn,));
+        let dev: Dev = Default::default();
+        let mut input_ids: Tensor<(usize,), usize, Dev> = dev.zeros_like(&(n,));
         input_ids.copy_from(&ids);
 
-        let mut position_ids: Tensor<(Dyn<SEQ>,), usize, Dev> = dev.zeros_like(&(nn,));
+        let mut position_ids: Tensor<(usize,), usize, Dev> = dev.zeros_like(&(n,));
         position_ids.copy_from(&positions);
 
         let input_embeds = self.wte.forward(input_ids);

@@ -17,7 +17,7 @@ memmap2 = "0.5"
 reqwest = { version = "0.11", features = ["stream"] }
 safetensors = { git = "https://github.com/huggingface/safetensors" }
 thiserror = "1.0"
-tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="main", default-features=false, features=["onig"] }
+tokenizers = { version = "0.13.2", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
 cblas-sys = { version = "0.1.4", default-features = false, optional = true }
 libc = { version = "0.2", default-features = false, optional = true }
@@ -27,11 +27,9 @@ tracing = "0.1.37"
 serde = { version = "1.0.152", features = ["serde_derive"] }
 tower-http = { version = "0.3.5", features = ["trace"] }
 serde_json = "1.0.91"
-dfdx = { git = "https://github.com/Narsil/dfdx", branch="fast_gpt2", optional= true, default-features=false, features=["safetensors"] }
-cudarc = { git = "https://github.com/coreylowman/cudarc" }
+dfdx = { git = "https://github.com/Narsil/dfdx", branch="fast_gpt2_2", optional= true, default-features=false, features=["safetensors"] }
+cudarc = "0.7"
 lazy_static = "1.4.0"
-# dfdx = { path = "../dfdx", optional= true, default-features=false, features=["safetensors"] }
-# cudarc = { path = "../cudarc" }
 
 [features]
 default = []
