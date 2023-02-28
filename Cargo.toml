@@ -15,7 +15,7 @@ futures-util = "0.3.25"
 matrixmultiply = {version = "0.3.2", features= ["threading"]}
 memmap2 = "0.5"
 reqwest = { version = "0.11", features = ["stream"] }
-safetensors = { git = "https://github.com/huggingface/safetensors", branch="forcing_alignment" }
+safetensors = { git = "https://github.com/huggingface/safetensors" }
 thiserror = "1.0"
 tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="main", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
@@ -28,15 +28,17 @@ serde = { version = "1.0.152", features = ["serde_derive"] }
 tower-http = { version = "0.3.5", features = ["trace"] }
 serde_json = "1.0.91"
 dfdx = { git = "https://github.com/Narsil/dfdx", branch="fast_gpt2", optional= true, default-features=false, features=["safetensors"] }
+cudarc = { git = "https://github.com/coreylowman/cudarc" }
 lazy_static = "1.4.0"
 # dfdx = { path = "../dfdx", optional= true, default-features=false, features=["safetensors"] }
-cudarc = { path = "../cudarc" }
+# cudarc = { path = "../cudarc" }
 
 [features]
-default = ["gpt2"]
+default = []
 cblas = ["dep:cblas-sys", "dep:libc"]
 intel-mkl = ["cblas"]
 dfdx_intel = ["dfdx/intel-mkl"]
+dfdx_nightly = ["dfdx/nightly"]
 cuda = ["dfdx/cuda"]
 gpt2 = []
 gpt2-medium = []

@@ -214,6 +214,7 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.7.2"
+source = "git+https://github.com/coreylowman/cudarc#4314c6b39a18eef0fe18a01b7a6b9c3535ad88c0"
 dependencies = [
  "find_cuda_helper",
  "half",
@@ -290,7 +291,7 @@ dependencies = [
 [[package]]
 name = "dfdx"
 version = "0.10.0"
-source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#c81654fec198d5063ae8d4bf61e8b8578d0b1575"
+source = "git+https://github.com/Narsil/dfdx?branch=fast_gpt2#ca177b8f9773a74e7f0fc1adaae4a9371660edf5"
 dependencies = [
  "cblas-sys",
  "cudarc 0.7.1",
@@ -1226,7 +1227,7 @@ dependencies = [
 [[package]]
 name = "safetensors"
 version = "0.2.9"
-source = "git+https://github.com/huggingface/safetensors?branch=forcing_alignment#f5ef88d715e5a6cd1594ce36fc1b94a93bbaf85e"
+source = "git+https://github.com/huggingface/safetensors#0c5b3a6b9c9be653b91ce8355225b8cad074f8b0"
 dependencies = [
  "serde",
  "serde_json",

@@ -4,6 +4,7 @@ pub mod ops;
 pub mod tensor;
 use crate::download::download;
 use crate::model::Gpt2;
+#[cfg(feature = "cuda")]
 use cudarc::driver::{profiler_start, profiler_stop};
 use memmap2::MmapOptions;
 use safetensors::tensor::{SafeTensorError, SafeTensors};
@@ -50,12 +51,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let max_files = 100;
     let chunk_size = 10_000_000;
     if !std::path::Path::new(&filename).exists() {
-        #[cfg(feature = "gpt2")]
         let revision = "main";
-        #[cfg(feature = "gpt2-medium")]
-        let revision = "refs%2Fpr%2F3";
-        #[cfg(feature = "gpt2-large")]
-        let revision = "refs%2Fpr%2F3";
 
         let url = format!("https://huggingface.co/{model_id}/resolve/{revision}/model.safetensors");
         println!("Downloading {url:?} into {filename:?}");
@@ -81,16 +77,16 @@ pub async fn run() -> Result<(), Gpt2Error> {
     #[cfg(feature = "gpt2")]
     let num_heads = 12;
     #[cfg(feature = "gpt2-medium")]
-    let num_heads = 24;
+    let num_heads = 16;
     #[cfg(feature = "gpt2-large")]
-    let num_heads = 36;
+    let num_heads = 20;
 
     #[cfg(feature = "dfdx")]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads, &dev);
     #[cfg(not(feature = "dfdx"))]
     let gpt2 = Gpt2::from_tensors(&tensors, num_heads);
 
-    let string = "My name was";
+    let string = "My name is";
 
     let encoded = tokenizer.encode(string, false).unwrap();
     println!("Loaded & encoded {:?}", start.elapsed());
@@ -102,6 +98,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
     let mut past_key_values = gpt2.empty_past_key_values();
 
     let mut current_ids = ids.clone();
+    #[cfg(feature = "cuda")]
     profiler_start()?;
     for _i in 0..10 {
         // println!("-------------");
@@ -113,6 +110,7 @@ pub async fn run() -> Result<(), Gpt2Error> {
         // dev.synchronize().unwrap();
         println!("Loop in {:?}", start.elapsed());
     }
+    #[cfg(feature = "cuda")]
     profiler_stop()?;
     println!("Result {:?}", tokenizer.decode(ids, false));
     println!("Total Inference {:?}", start.elapsed());
