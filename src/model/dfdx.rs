@@ -5,7 +5,7 @@ use dfdx::nn::{
 };
 use dfdx::prelude::{Axis, BuildModule, Const, Rank2, Shape, Tensor, TensorFrom, ZerosTensor};
 use dfdx::shapes::{Dim, Dyn, HasShape};
-use dfdx::tensor::{AsArray, AsVec};
+use dfdx::tensor::AsArray;
 use dfdx::tensor_ops::{GatherTo, PermuteTo, TryAttentionReshape, TryMatMul};
 use safetensors::tensor::{SafeTensorError, SafeTensors, TensorView};
 
@@ -48,7 +48,6 @@ const MAX_POSITIONS: usize = 1024;
 const FF_DIM: usize = HIDDEN_DIM * 4;
 const PAST: char = 'P';
 const SEQ: char = 'S';
-const PRESENT: char = 'T';
 type HiddenShape = (Dyn<SEQ>, Const<HIDDEN_DIM>);
 type QkvShape = (Dyn<SEQ>, Const<{ HIDDEN_DIM * 3 }>);
 type PastKeyShape = (Const<NUM_HEADS>, Const<HEAD_DIM>, usize);
