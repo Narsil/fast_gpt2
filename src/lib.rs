@@ -33,6 +33,7 @@ pub enum Gpt2Error {
     AcquireError(#[from] tokio::sync::AcquireError),
     #[error("No content length")]
     NoContentLength,
+    #[cfg(feature = "cuda")]
     #[error("Driver error")]
     ProfilerError(#[from] cudarc::driver::DriverError),
 }
