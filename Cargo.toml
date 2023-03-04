@@ -20,6 +20,7 @@ thiserror = "1.0"
 tokenizers = { git = "https://github.com/huggingface/tokenizers", branch="main", default-features=false, features=["onig"] }
 tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros"] }
 cblas-sys = { version = "0.1.4", default-features = false, optional = true }
+blas = { version = "0.22", default-features = false, optional = true }
 blas-src = { version = "0.7", default-features = false, optional = true }
 libc = { version = "0.2", default-features = false, optional = true }
 tracing-subscriber = "0.3.16"
@@ -35,7 +36,9 @@ lazy_static = "1.4.0"
 [features]
 default = ["gpt2"]
 cblas = ["dep:cblas-sys", "dep:libc"]
-accelerate = ["blas-src/accelerate", "dep:libc"]
+blas = ["dep:blas"]
+blas_mkl = ["blas", "blas-src/intel-mkl"]
+accelerate = ["blas-src/accelerate"]
 intel-mkl = ["cblas"]
 dfdx_intel = ["dfdx/intel-mkl"]
 dfdx_nightly = ["dfdx/nightly"]

@@ -7,10 +7,11 @@ use cblas_sys::{
 };
 
 #[cfg(feature = "blas")]
-use blas_src::{
-    sgemm, CblasColMajor as ColMajor, CblasNoTrans as NoTr, CblasRowMajor as RowMajor,
-    CblasTrans as Tr,
-};
+use blas::sgemm;
+#[cfg(feature = "blas")]
+extern crate blas;
+#[cfg(feature = "blas")]
+extern crate blas_src;
 
 #[inline]
 pub fn addmm<X: Tensor, A: Tensor, B: Tensor, TM: TensorMut>(x: &X, a: &A, b: &B, out: &mut TM) {
@@ -89,13 +90,28 @@ pub fn g_matmul<const TRANSPOSE: bool, A: Tensor, B: Tensor, TM: TensorMut>(
     let cc = 1;
 
     (0..batching).for_each(|step| {
-        let ap = a.data()[step * a_skip..].as_ptr();
-        let bp = b.data()[step * b_skip..].as_ptr();
-        let cp = c.data_mut()[step * c_skip..].as_mut_ptr();
+        let ap = &a.data()[step * a_skip..];
+        let bp = &b.data()[step * b_skip..];
+        let cp = &mut c.data_mut()[step * c_skip..];
 
-        #[cfg(not(feature = "cblas"))]
+        #[cfg(not(any(feature = "blas", feature = "cblas")))]
         unsafe {
-            matrixmultiply::sgemm(m, k, n, 1.0, ap, ar, ac, bp, br, bc, 1.0, cp, cr, cc);
+            matrixmultiply::sgemm(
+                m,
+                k,
+                n,
+                1.0,
+                ap.as_ptr(),
+                ar,
+                ac,
+                bp.as_ptr(),
+                br,
+                bc,
+                1.0,
+                cp.as_mut_ptr(),
+                cr,
+                cc,
+            );
         }
 
         #[cfg(feature = "cblas")]
@@ -111,25 +127,38 @@ pub fn g_matmul<const TRANSPOSE: bool, A: Tensor, B: Tensor, TM: TensorMut>(
                 (RowMajor, a_tr, b_tr, lda, ldb, n)
             };
             sgemm(
-                layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
+                layout,
+                a_tr,
+                b_tr,
+                m,
+                n,
+                k,
+                1.0,
+                ap.as_ptr(),
+                lda,
+                bp.as_ptr(),
+                ldb,
+                1.0,
+                cp.as_mut_ptr(),
+                ldc,
             )
         }
 
         #[cfg(feature = "blas")]
         unsafe {
-            let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
-            let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
-                let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
-                let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
-                (ColMajor, a_tr, b_tr, lda, ldb, m)
+            let (m, n, k) = (m as i32, n as i32, k as i32);
+            let no_tr = b'N';
+            let tr = b'T';
+            let (a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
+                let (lda, a_tr) = if ar < ac { (m, no_tr) } else { (k, tr) };
+                let (ldb, b_tr) = if br < bc { (k, no_tr) } else { (n, tr) };
+                (a_tr, b_tr, lda, ldb, m)
             } else {
-                let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
-                let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
-                (RowMajor, a_tr, b_tr, lda, ldb, n)
+                let (lda, a_tr) = if ar < ac { (m, tr) } else { (k, no_tr) };
+                let (ldb, b_tr) = if br < bc { (k, tr) } else { (n, no_tr) };
+                (a_tr, b_tr, lda, ldb, n)
             };
-            sgemm(
-                layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
-            )
+            sgemm(a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc)
         }
     });
 }
