@@ -3,6 +3,12 @@
 version = 3
 
 [[package]]
+name = "accelerate-src"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "415ed64958754dbe991900f3940677e6a7eefb4d7367afd70d642677b0c7d19d"
+
+[[package]]
 name = "ahash"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -101,6 +107,15 @@ name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "blas-src"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "179fa99e83340433f9fe61b22cc88db2e310bb93923daac81795610f750208fb"
+dependencies = [
+ "accelerate-src",
+]
 
 [[package]]
 name = "bumpalo"
@@ -353,6 +368,7 @@ name = "fast_gpt2"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blas-src",
  "cblas-sys",
  "cudarc 0.7.5 (git+https://github.com/coreylowman/cudarc)",
  "dfdx",

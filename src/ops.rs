@@ -6,6 +6,12 @@ use cblas_sys::{
     CblasRowMajor as RowMajor, CblasTrans as Tr,
 };
 
+#[cfg(feature = "blas")]
+use blas_src::{
+    sgemm, CblasColMajor as ColMajor, CblasNoTrans as NoTr, CblasRowMajor as RowMajor,
+    CblasTrans as Tr,
+};
+
 #[inline]
 pub fn addmm<X: Tensor, A: Tensor, B: Tensor, TM: TensorMut>(x: &X, a: &A, b: &B, out: &mut TM) {
     let m = x.shape()[0];
@@ -93,6 +99,23 @@ pub fn g_matmul<const TRANSPOSE: bool, A: Tensor, B: Tensor, TM: TensorMut>(
         }
 
         #[cfg(feature = "cblas")]
+        unsafe {
+            let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
+            let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
+                let (lda, a_tr) = if ar < ac { (m, NoTr) } else { (k, Tr) };
+                let (ldb, b_tr) = if br < bc { (k, NoTr) } else { (n, Tr) };
+                (ColMajor, a_tr, b_tr, lda, ldb, m)
+            } else {
+                let (lda, a_tr) = if ar < ac { (m, Tr) } else { (k, NoTr) };
+                let (ldb, b_tr) = if br < bc { (k, Tr) } else { (n, NoTr) };
+                (RowMajor, a_tr, b_tr, lda, ldb, n)
+            };
+            sgemm(
+                layout, a_tr, b_tr, m, n, k, 1.0, ap, lda, bp, ldb, 1.0, cp, ldc,
+            )
+        }
+
+        #[cfg(feature = "blas")]
         unsafe {
             let (m, n, k) = (m as libc::c_int, n as libc::c_int, k as libc::c_int);
             let (layout, a_tr, b_tr, lda, ldb, ldc) = if cr < cc {
