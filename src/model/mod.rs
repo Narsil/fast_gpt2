@@ -4,6 +4,6 @@ pub mod dfdx;
 pub use self::dfdx::Gpt2;
 
 #[cfg(not(feature = "dfdx"))]
-pub mod raw;
+pub mod smelt;
 #[cfg(not(feature = "dfdx"))]
-pub use raw::Gpt2;
+pub use crate::model::smelt::Gpt2;

@@ -1,6 +1,153 @@
-use crate::ops::{add, addmm, attention, gelu, matmul_t, mul, normalize, select, special_argmax};
-use crate::tensor::{OwnedTensor, PastKeyValue, PastKeyValues, Tensor, TensorMut, ViewTensor};
 use safetensors::tensor::{SafeTensors, TensorView};
+use smelt::ops::{
+    add, addmm, causal_softmax, gelu, matmul, matmul_t, mul, normalize, select, special_argmax,
+};
+use smelt::tensor::{OwnedTensor, Tensor, TensorMut, ViewTensor};
+
+/// A special structure handy for Past Key values for text-generation
+pub struct PastKeyValue {
+    /// The cached key tensor. Shape is `NUM_HEADS, PAST_SEQUENCE_LENGTH, HEAD_DIM`.
+    pub key: OwnedTensor,
+    /// The cached value tensor. Shape is `NUM_HEADS, PAST_SEQUENCE_LENGTH, HEAD_DIM`.
+    pub value: OwnedTensor,
+}
+
+impl PastKeyValue {
+    pub fn new(num_heads: usize, past_sequence_length: usize, head_dim: usize) -> Self {
+        let key = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        let value = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        Self { key, value }
+    }
+}
+
+pub type PastKeyValues = Vec<PastKeyValue>;
+
+fn attention<T: Tensor, TM: TensorMut>(
+    qkv: &T,
+    qk: &mut TM,
+    max: &mut [f32],
+    past: &mut PastKeyValue,
+    out: &mut OwnedTensor,
+) {
+    let sequence_length = qkv.shape()[0];
+    let past_sequence_length = past.key.shape()[1];
+    let hidden_dim3 = qkv.shape()[1];
+    assert_eq!(hidden_dim3 % 3, 0);
+    let hidden_dim = hidden_dim3 / 3;
+    let num_heads = qk.shape()[0];
+    assert_eq!(hidden_dim % num_heads, 0);
+    let head_dim = hidden_dim / num_heads;
+
+    assert_eq!(
+        qk.shape(),
+        vec![
+            num_heads,
+            sequence_length,
+            (past_sequence_length + sequence_length)
+        ]
+    );
+    assert_eq!(
+        past.key.shape(),
+        vec![num_heads, past_sequence_length, head_dim]
+    );
+    assert_eq!(
+        past.value.shape(),
+        vec![num_heads, past_sequence_length, head_dim]
+    );
+
+    let (query, key, value) = split_qkv(qkv, past);
+
+    matmul_t(&query, &key, qk);
+    let head_dim = hidden_dim / num_heads;
+    let scale = (head_dim as f32).sqrt();
+    qk.data_mut().iter_mut().for_each(|v| *v /= scale);
+
+    causal_softmax(qk, max, past_sequence_length);
+    matmul(qk, &value, out);
+
+    let mut new_out = vec![0.0; sequence_length * hidden_dim];
+    (0..num_heads).for_each(|i| {
+        (0..sequence_length).for_each(|j| {
+            (0..head_dim).for_each(|k| {
+                let in_index = i * sequence_length * head_dim + j * head_dim + k;
+                let out_index = j * hidden_dim + i * head_dim + k;
+                new_out[out_index] = out.data()[in_index];
+            });
+        });
+    });
+    *out = OwnedTensor::new(new_out, vec![sequence_length, hidden_dim]);
+    *past = PastKeyValue { key, value };
+}
+
+pub(crate) fn split_qkv<T: Tensor>(
+    qkv: &T,
+    past: &PastKeyValue,
+) -> (OwnedTensor, OwnedTensor, OwnedTensor) {
+    let sequence_length = qkv.shape()[0];
+    let past_sequence_length = past.key.shape()[1];
+    let hidden_dim3 = qkv.shape()[1];
+    assert_eq!(hidden_dim3 % 3, 0);
+    let hidden_dim = hidden_dim3 / 3;
+    let num_heads = past.key.shape()[0];
+    assert_eq!(hidden_dim % num_heads, 0);
+    let head_dim = hidden_dim / num_heads;
+    let mut query_data = vec![0.0; num_heads * sequence_length * head_dim];
+    (0..num_heads).for_each(|i| {
+        (0..sequence_length).for_each(|j| {
+            (0..head_dim).for_each(|k| {
+                let index = j * hidden_dim * 3 + i * head_dim + k;
+                let out_index = i * sequence_length * head_dim + j * head_dim + k;
+                let value = qkv.data()[index];
+                query_data[out_index] = value;
+            });
+        });
+    });
+    let query = OwnedTensor::new(query_data, vec![num_heads, sequence_length, head_dim]);
+
+    let mut key_data = vec![0.0; num_heads * (past_sequence_length + sequence_length) * head_dim];
+    let mut value_data = vec![0.0; num_heads * (past_sequence_length + sequence_length) * head_dim];
+    (0..num_heads).for_each(|i| {
+        (0..past_sequence_length + sequence_length).for_each(|j| {
+            (0..head_dim).for_each(|k| {
+                let in_index =
+                    i * (past_sequence_length + sequence_length) * head_dim + j * head_dim + k;
+                if j < past_sequence_length {
+                    let index = i * past_sequence_length * head_dim + j * head_dim + k;
+                    let k_value = past.key.data()[index];
+                    let v_value = past.value.data()[index];
+                    key_data[in_index] = k_value;
+                    value_data[in_index] = v_value;
+                } else {
+                    let sj = j - past_sequence_length;
+                    let k_index = sj * hidden_dim * 3 + i * head_dim + hidden_dim + k;
+                    let v_index = sj * hidden_dim * 3 + i * head_dim + hidden_dim * 2 + k;
+                    let k_value = qkv.data()[k_index];
+                    let v_value = qkv.data()[v_index];
+                    key_data[in_index] = k_value;
+                    value_data[in_index] = v_value;
+                }
+            });
+        });
+    });
+
+    let key = OwnedTensor::new(
+        key_data,
+        vec![
+            num_heads,
+            (past_sequence_length + sequence_length),
+            head_dim,
+        ],
+    );
+    let value = OwnedTensor::new(
+        value_data,
+        vec![
+            num_heads,
+            (past_sequence_length + sequence_length),
+            head_dim,
+        ],
+    );
+    (query, key, value)
+}
 
 #[derive(Clone)]
 pub struct Mlp<'a> {
@@ -339,10 +486,9 @@ impl<'a> Gpt2<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::split_qkv;
-    use crate::tensor::{OwnedTensor, TensorMut, ViewTensor};
     use crate::tests::simplify;
     use memmap2::MmapOptions;
+    use smelt::tensor::{OwnedTensor, TensorMut, ViewTensor};
 
     #[test]
     fn tensor_values() {
