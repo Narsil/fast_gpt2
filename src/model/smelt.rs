@@ -1,7 +1,5 @@
 use safetensors::tensor::{SafeTensors, TensorView};
-use smelt::ops::{
-    add, addmm, causal_softmax, gelu, matmul, matmul_t, mul, normalize, select, special_argmax,
-};
+use smelt::ops::{add, causal_softmax, gelu, matmul, matmul_t, mul, normalize, select};
 use smelt::tensor::{OwnedTensor, Tensor, TensorMut, ViewTensor};
 
 /// A special structure handy for Past Key values for text-generation
@@ -14,8 +12,8 @@ pub struct PastKeyValue {
 
 impl PastKeyValue {
     pub fn new(num_heads: usize, past_sequence_length: usize, head_dim: usize) -> Self {
-        let key = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
-        let value = OwnedTensor::new(vec![], vec![num_heads, past_sequence_length, head_dim]);
+        let key = OwnedTensor::zeros(vec![num_heads, past_sequence_length, head_dim]);
+        let value = OwnedTensor::zeros(vec![num_heads, past_sequence_length, head_dim]);
         Self { key, value }
     }
 }
@@ -57,13 +55,13 @@ fn attention<T: Tensor, TM: TensorMut>(
 
     let (query, key, value) = split_qkv(qkv, past);
 
-    matmul_t(&query, &key, qk);
+    matmul_t(&query, &key, qk).unwrap();
     let head_dim = hidden_dim / num_heads;
     let scale = (head_dim as f32).sqrt();
     qk.data_mut().iter_mut().for_each(|v| *v /= scale);
 
-    causal_softmax(qk, max, past_sequence_length);
-    matmul(qk, &value, out);
+    causal_softmax(qk, max, past_sequence_length).unwrap();
+    matmul(qk, &value, out).unwrap();
 
     let mut new_out = vec![0.0; sequence_length * hidden_dim];
     (0..num_heads).for_each(|i| {
@@ -75,7 +73,7 @@ fn attention<T: Tensor, TM: TensorMut>(
             });
         });
     });
-    *out = OwnedTensor::new(new_out, vec![sequence_length, hidden_dim]);
+    *out = OwnedTensor::new(new_out, vec![sequence_length, hidden_dim]).unwrap();
     *past = PastKeyValue { key, value };
 }
 
@@ -102,7 +100,7 @@ pub(crate) fn split_qkv<T: Tensor>(
             });
         });
     });
-    let query = OwnedTensor::new(query_data, vec![num_heads, sequence_length, head_dim]);
+    let query = OwnedTensor::new(query_data, vec![num_heads, sequence_length, head_dim]).unwrap();
 
     let mut key_data = vec![0.0; num_heads * (past_sequence_length + sequence_length) * head_dim];
     let mut value_data = vec![0.0; num_heads * (past_sequence_length + sequence_length) * head_dim];
@@ -137,7 +135,8 @@ pub(crate) fn split_qkv<T: Tensor>(
             (past_sequence_length + sequence_length),
             head_dim,
         ],
-    );
+    )
+    .unwrap();
     let value = OwnedTensor::new(
         value_data,
         vec![
@@ -145,7 +144,8 @@ pub(crate) fn split_qkv<T: Tensor>(
             (past_sequence_length + sequence_length),
             head_dim,
         ],
-    );
+    )
+    .unwrap();
     (query, key, value)
 }
 
@@ -276,12 +276,12 @@ impl<'a> Gpt2Layer<'a> {
         let residual = tensor.clone();
         self.ln_1.forward(tensor);
         self.attention.forward(tensor, past_key_value);
-        add(&residual, tensor);
+        add(&residual, tensor).unwrap();
         let residual = tensor.clone();
         self.ln_2.forward(tensor);
 
         self.mlp.forward(tensor);
-        add(&residual, tensor);
+        add(&residual, tensor).unwrap();
     }
 }
 
@@ -334,8 +334,9 @@ impl<'a> Linear<'a> {
         assert_eq!(tensor.shape().len(), 2);
         let m = tensor.shape()[0];
         let n = self.weight.shape()[1];
-        let mut c = OwnedTensor::new(vec![0.0; n * m], vec![m, n]);
-        addmm(tensor, &self.weight, &self.bias, &mut c);
+        let mut c = OwnedTensor::zeros(vec![m, n]);
+        matmul(tensor, &self.weight, &mut c).unwrap();
+        add(&self.bias, &mut c).unwrap();
         *tensor = c;
     }
 }
@@ -362,8 +363,8 @@ impl<'a> UnbiasedLinear<'a> {
     fn forward(&self, tensor: &mut OwnedTensor) {
         let m = tensor.shape()[0];
         let n = self.weight.shape()[0];
-        let mut c = OwnedTensor::new(vec![0.0; n * m], vec![m, n]);
-        matmul_t(tensor, &self.weight, &mut c);
+        let mut c = OwnedTensor::zeros(vec![m, n]);
+        matmul_t(tensor, &self.weight, &mut c).unwrap();
         *tensor = c;
     }
 }
@@ -383,9 +384,8 @@ impl<'a> Embedding<'a> {
         let _vocab_size = self.weight.shape()[0];
         let hidden_dim = self.weight.shape()[1];
         let shape = vec![ids.len(), hidden_dim];
-        let data = vec![0.0; ids.len() * hidden_dim];
-        let mut tensor = OwnedTensor::new(data, shape);
-        select(ids, &self.weight, &mut tensor);
+        let mut tensor = OwnedTensor::zeros(shape);
+        select(ids, &self.weight, &mut tensor).unwrap();
         tensor
     }
 }
@@ -413,9 +413,9 @@ impl<'a> LayerNorm<'a> {
         let m = tensor.shape()[0];
         let mut mean = vec![0.0; m];
         let mut var = vec![0.0; m];
-        normalize(tensor, &mut mean, &mut var, self.epsilon);
-        mul(&self.weight, tensor);
-        add(&self.bias, tensor);
+        normalize(tensor, &mut mean, &mut var, self.epsilon).unwrap();
+        mul(&self.weight, tensor).unwrap();
+        add(&self.bias, tensor).unwrap();
     }
 }
 
@@ -450,6 +450,23 @@ impl<'a> Gpt2<'a> {
     }
 }
 
+/// Argmax of the last dimension of tensor `x `.
+pub fn special_argmax<T: Tensor>(x: &T) -> usize {
+    assert_eq!(x.shape().len(), 2);
+    let n = x.shape()[0];
+    let m = x.shape()[1];
+
+    let mut max = f32::NEG_INFINITY;
+    let mut max_id = usize::MAX;
+    for (i, &v) in x.data().iter().skip((n - 1) * m).enumerate() {
+        if v > max {
+            max = v;
+            max_id = i;
+        }
+    }
+    max_id
+}
+
 impl<'a> Gpt2<'a> {
     pub fn empty_past_key_values(&self) -> PastKeyValues {
         let num_layers = self.h.layers.len();
@@ -469,7 +486,7 @@ impl<'a> Gpt2<'a> {
             .map(|i| (i + past_sequence_length) as u32)
             .collect();
         let position_embeddings = self.wpe.forward(&positions[..]);
-        add(&position_embeddings, &mut tensor);
+        add(&position_embeddings, &mut tensor).unwrap();
         // println!(
         //     "embeds {:?} {:?}",
         //     &tensor.data()[..5],
